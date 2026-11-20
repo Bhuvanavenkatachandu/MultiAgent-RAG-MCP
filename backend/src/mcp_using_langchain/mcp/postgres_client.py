@@ -15,6 +15,15 @@ def create_mcp_client():
     if not database_url:
         raise ValueError("DATABASE_URL is missing from .env")
 
+    # Filter out Render-specific internal bash variables that corrupt node subprocesses
+    clean_env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("RENDER_") and "${" not in v
+    }
+    clean_env["DATABASE_URL"] = database_url
+    clean_env["PG_ALLOW_WRITE"] = os.getenv("PG_ALLOW_WRITE", "false")
+
     client = MultiServerMCPClient(
         {
             "postgres": {
@@ -24,13 +33,7 @@ def create_mcp_client():
                     "mcp-postgres-server"
                 ],
                 "transport": "stdio",
-                "env": {
-                    **os.environ,
-                    "DATABASE_URL": database_url,
-                    "PG_ALLOW_WRITE": os.getenv(
-                        "PG_ALLOW_WRITE", "false"
-                    )
-                }
+                "env": clean_env
             }
         }
     )

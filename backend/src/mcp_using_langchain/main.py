@@ -32,13 +32,15 @@ async def run():
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing")
 
-    # 1. Initialize Groq
+    # 1. Initialize Groq with capped max_tokens for free-tier rate limits
+    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "800"))
     llm = ChatGroq(
         model=os.getenv(
             "GROQ_MODEL",
-            "openai/gpt-oss-120b"
+            "qwen/qwen3.8-27b"
         ),
-        api_key=api_key
+        api_key=api_key,
+        max_tokens=max_tokens,
     )
 
     print("Groq initialized")

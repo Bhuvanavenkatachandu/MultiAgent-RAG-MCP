@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MultiAgent-RAG-MCP — Project Learning Guide</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --sidebar-bg: #161b22;
+    --card-bg: #1c2230;
+    --card-border: #2d3748;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --accent: #10b981;
+    --accent2: #6366f1;
+    --accent3: #f59e0b;
+    --accent4: #ef4444;
+    --accent5: #3b82f6;
+    --code-bg: #0d1117;
+    --tag-green: #064e3b;
+    --tag-green-text: #6ee7b7;
+    --tag-yellow: #451a03;
+    --tag-yellow-text: #fcd34d;
+    --tag-red: #450a0a;
+    --tag-red-text: #fca5a5;
+    --sidebar-width: 260px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    position: fixed;
+    top: 0; left: 0;
+    width: var(--sidebar-width);
+    height: 100vh;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--card-border);
+    overflow-y: auto;
+    padding: 24px 0;
+    z-index: 100;
+    transition: transform 0.3s;
+  }
+  .sidebar-header {
+    padding: 0 20px 20px;
+    border-bottom: 1px solid var(--card-border);
+    margin-bottom: 12px;
+  }
+  .sidebar-header h2 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .sidebar-header p {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  #sidebar nav a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 20px;
+    font-size: 13px;
+    color: var(--muted);
+    text-decoration: none;
+    border-left: 3px solid transparent;
+    transition: all 0.2s;
+  }
+  #sidebar nav a:hover, #sidebar nav a.active {
+    color: var(--text);
+    background: rgba(16,185,129,0.08);
+    border-left-color: var(--accent);
+  }
+  .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+
+  /* ── Main ── */
+  #main {
+    margin-left: var(--sidebar-width);
+    flex: 1;
+    padding: 40px 48px;
+    max-width: 980px;
+  }
+  @media (max-width: 768px) {
+    #sidebar { transform: translateX(-100%); }
+    #sidebar.open { transform: translateX(0); }
+    #main { margin-left: 0; padding: 20px 16px; }
+    #menu-btn { display: flex !important; }
+  }
+  #menu-btn {
+    display: none;
+    position: fixed;
+    top: 14px; left: 14px;
+    z-index: 200;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 18px;
+  }
+
+  /* ── Section ── */
+  section { margin-bottom: 60px; }
+  section:target { scroll-margin-top: 24px; }
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  h1 { font-size: 32px; font-weight: 800; margin-bottom: 12px; line-height: 1.2; }
+  h2 { font-size: 22px; font-weight: 700; margin-bottom: 16px; color: var(--text); }
+  h3 { font-size: 16px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
+  p { margin-bottom: 14px; color: var(--text); font-size: 14.5px; }
+  ul, ol { padding-left: 22px; margin-bottom: 14px; font-size: 14.5px; }
+  li { margin-bottom: 6px; }
+  strong { color: #fff; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .card-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .card-sm {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    flex: 1;
+    min-width: 200px;
+  }
+  .card-sm h3 { font-size: 14px; color: var(--accent); margin-bottom: 6px; }
+  .card-sm p { font-size: 13px; color: var(--muted); margin: 0; }
+
+  /* ── Code ── */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 14px 0 20px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  code { font-family: 'Fira Code', 'Courier New', monospace; color: #e2e8f0; }
+  pre code { color: #c9d1d9; }
+  .kw { color: #ff79c6; }
+  .fn { color: #50fa7b; }
+  .str { color: #f1fa8c; }
+  .cm { color: #6272a4; }
+  .cls { color: #8be9fd; }
+  .num { color: #bd93f9; }
+  inline-code, code.inline {
+    background: var(--code-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 12.5px;
+    font-family: 'Fira Code', monospace;
+    color: #f1fa8c;
+  }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-bottom: 20px; }
+  th {
+    background: rgba(16,185,129,0.12);
+    color: var(--accent);
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--card-border); color: var(--text); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+
+  /* ── Status Tags ── */
+  .tag {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .tag-green { background: var(--tag-green); color: var(--tag-green-text); }
+  .tag-yellow { background: var(--tag-yellow); color: var(--tag-yellow-text); }
+  .tag-red { background: var(--tag-red); color: var(--tag-red-text); }
+
+  /* ── Architecture Diagram ── */
+  .arch-box {
+    background: var(--code-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 28px 24px;
+    font-family: 'Fira Code', monospace;
+    font-size: 13px;
+    overflow-x: auto;
+    line-height: 2;
+  }
+  .arch-user { color: #50fa7b; }
+  .arch-api { color: #8be9fd; }
+  .arch-supervisor { color: #ff79c6; }
+  .arch-agent { color: #f1fa8c; }
+  .arch-tool { color: #ffb86c; }
+  .arch-db { color: #bd93f9; }
+  .arch-rag { color: #ff5555; }
+  .arch-arrow { color: #6272a4; }
+
+  /* ── Workflow steps ── */
+  .steps { counter-reset: step; }
+  .step {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 18px;
+    align-items: flex-start;
+  }
+  .step-num {
+    counter-increment: step;
+    min-width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #000;
+    font-weight: 800;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-content h3 { margin-bottom: 4px; font-size: 14.5px; }
+  .step-content p { font-size: 13.5px; color: var(--muted); margin: 0; }
+
+  /* ── QA ── */
+  .qa { margin-bottom: 20px; }
+  .qa-q {
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 14.5px;
+    margin-bottom: 6px;
+    display: flex;
+    gap: 10px;
+  }
+  .qa-q::before { content: "Q:"; color: var(--accent2); font-weight: 800; }
+  .qa-a {
+    padding: 12px 16px;
+    background: var(--card-bg);
+    border-left: 3px solid var(--accent2);
+    border-radius: 0 8px 8px 0;
+    font-size: 13.5px;
+    color: var(--text);
+  }
+  .qa-a::before { content: "A: "; font-weight: 700; color: var(--accent3); }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(99,102,241,0.12) 100%);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 40px;
+  }
+  .hero-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .badge {
+    background: rgba(16,185,129,0.15);
+    border: 1px solid rgba(16,185,129,0.3);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 20px;
+  }
+
+  /* ── File link ── */
+  .file-link { color: var(--accent3); font-family: monospace; font-size: 13px; }
+
+  /* ── Progress bar ── */
+  .progress-row { margin-bottom: 10px; }
+  .progress-label { font-size: 13px; color: var(--muted); margin-bottom: 4px; display: flex; justify-content: space-between; }
+  .progress-bar { height: 6px; background: var(--card-border); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+
+  /* ── divider ── */
+  hr { border: none; border-top: 1px solid var(--card-border); margin: 30px 0; }
+
+  /* ── scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<button id="menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+
+<!-- ── SIDEBAR ── -->
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <h2>Learning Guide</h2>
+    <p>MultiAgent-RAG-MCP</p>
+  </div>
+  <nav>
+    <a href="#s1" class="active"><span class="nav-icon">🏗️</span> What I Built</a>
+    <a href="#s2"><span class="nav-icon">🧩</span> Problem &amp; Solution</a>
+    <a href="#s3"><span class="nav-icon">🛤️</span> Dev Approach</a>
+    <a href="#s4"><span class="nav-icon">🗺️</span> Architecture</a>
+    <a href="#s5"><span class="nav-icon">🔧</span> Technologies</a>
+    <a href="#s6"><span class="nav-icon">🔄</span> Workflows</a>
+    <a href="#s7"><span class="nav-icon">📚</span> Learning Roadmap</a>
+    <a href="#s8"><span class="nav-icon">📂</span> Code Walkthrough</a>
+    <a href="#s9"><span class="nav-icon">🎓</span> What I Learned</a>
+    <a href="#s10"><span class="nav-icon">🎤</span> Interview Prep</a>
+    <a href="#s11"><span class="nav-icon">🚀</span> Next Steps</a>
+  </nav>
+</aside>
+
+<!-- ── MAIN CONTENT ── -->
+<main id="main">
+
+<!-- ════════════════════════════════════════ -->
+<section id="s1">
+  <div class="section-label">Section 01</div>
+  <h1>What I Built</h1>
+
+  <div class="hero">
+    <h2 style="font-size:20px;margin-bottom:8px;">MultiAgent-RAG-MCP</h2>
+    <p style="color:var(--muted);margin:0;">A hierarchical multi-agent AI system that lets you chat with a live PostgreSQL database and uploaded documents using plain English. No SQL knowledge required.</p>
+    <div class="hero-badges">
+      <span class="badge">Python 3.14</span>
+      <span class="badge">FastAPI</span>
+      <span class="badge">LangGraph</span>
+      <span class="badge">MCP</span>
+      <span class="badge">FAISS RAG</span>
+      <span class="badge">React 18</span>
+      <span class="badge">Recharts</span>
+      <span class="badge">PostgreSQL</span>
+      <span class="badge">Groq LLM</span>
+    </div>
+  </div>
+
+  <div class="card-row">
+    <div class="card-sm">
+      <h3>🗄️ Database Intelligence</h3>
+      <p>Query live PostgreSQL data, inspect schemas, and run analytics — all in natural language.</p>
+    </div>
+    <div class="card-sm">
+      <h3>📄 Document Knowledge</h3>
+      <p>Upload PDF, DOCX, TXT, or Markdown files. The system searches them and answers questions from their content.</p>
+    </div>
+    <div class="card-sm">
+      <h3>🤖 Multi-Agent Routing</h3>
+      <p>A supervisor agent automatically decides which specialist agent to use for each question.</p>
+    </div>
+    <div class="card-sm">
+      <h3>📊 Auto Charts</h3>
+      <p>When AI returns a markdown table, the frontend auto-detects it and renders a Bar, Line, Pie, or Area chart.</p>
+    </div>
+  </div>
+
+  <h2>What the system can answer</h2>
+  <table>
+    <tr><th>Type</th><th>Example Question</th><th>Agent Used</th></tr>
+    <tr><td>Schema</td><td>What tables exist in this database?</td><td>Schema Agent</td></tr>
+    <tr><td>Data retrieval</td><td>Show top 5 customers by spending</td><td>Query Agent</td></tr>
+    <tr><td>Analytics</td><td>What is the revenue per product category?</td><td>Analytics Agent</td></tr>
+    <tr><td>Documents</td><td>What is the return policy?</td><td>RAG Agent</td></tr>
+    <tr><td>Mixed</td><td>What categories exist and what does the schema say?</td><td>Supervisor → both</td></tr>
+  </table>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s2">
+  <div class="section-label">Section 02</div>
+  <h1>Problem &amp; Solution</h1>
+
+  <h2>The Problem</h2>
+  <div class="card">
+    <p>Businesses store data in two separate places that don't talk to each other:</p>
+    <ul>
+      <li><strong>Structured data</strong> — in relational databases (like PostgreSQL): orders, users, products, revenue</li>
+      <li><strong>Unstructured data</strong> — in documents (PDF, DOCX, TXT): policies, rules, guides, contracts</li>
+    </ul>
+    <p>To get answers, someone must:</p>
+    <ol>
+      <li>Know SQL to write database queries</li>
+      <li>Manually read and search through documents</li>
+      <li>Combine both sources in their head</li>
+    </ol>
+    <p>This creates a knowledge barrier — only technical people can get insights from the system.</p>
+  </div>
+
+  <h2>My Solution</h2>
+  <div class="card">
+    <p>A single chat interface backed by a <strong>multi-agent AI system</strong> that:</p>
+    <ol>
+      <li>Accepts any question in plain English</li>
+      <li>Automatically decides if the question is about the <strong>database</strong>, a <strong>document</strong>, or both</li>
+      <li>Routes the question to the right specialist agent</li>
+      <li>Returns a clear, formatted answer — sometimes as a table or chart</li>
+    </ol>
+    <p>No SQL required. No document searching. The AI handles everything.</p>
+  </div>
+
+  <h2>The E-Commerce Context</h2>
+  <p>The system is pre-loaded with a PostgreSQL database containing:</p>
+  <ul>
+    <li>100 users with addresses</li>
+    <li>10 product categories, 50 products</li>
+    <li>Orders, payments, shipments, reviews (2,530+ records total)</li>
+    <li>11 tables connected by foreign keys</li>
+  </ul>
+  <p>This simulates a real business database that a manager, analyst, or customer support agent would need to query.</p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s3">
+  <div class="section-label">Section 03</div>
+  <h1>Development Approach</h1>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <h3>Design the database</h3>
+        <p>Created an e-commerce PostgreSQL schema with 11 tables and seeded 100 users + 2,530 records using <code class="inline">ecommerce_db.sql</code></p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <h3>Connect PostgreSQL via MCP</h3>
+        <p>Used <code class="inline">mcp-postgres-server</code> (via npx) and <code class="inline">langchain-mcp-adapters</code> to expose database tools (<code class="inline">list_schemas</code>, <code class="inline">list_tables</code>, <code class="inline">describe_table</code>, <code class="inline">query</code>) to the AI.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <h3>Build the specialist agents</h3>
+        <p>Created three database agents (Schema, Query, Analytics) and one document agent (RAG) using <code class="inline">create_react_agent</code> from LangGraph, each with a specific prompt and tool set.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <h3>Build the RAG pipeline</h3>
+        <p>Implemented document loading (<code class="inline">loader.py</code>), text chunking (<code class="inline">retriever.py</code>), HuggingFace embeddings (<code class="inline">embeddings.py</code>), and FAISS vector storage (<code class="inline">vectorstore.py</code>).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-content">
+        <h3>Build the supervisor</h3>
+        <p>Used <code class="inline">create_react_agent</code> as the supervisor (<code class="inline">supervisor.py</code>), giving it the four specialist agent tools and a routing prompt. The supervisor decides which tool(s) to call.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-content">
+        <h3>Build the FastAPI backend</h3>
+        <p>Wrapped everything in a FastAPI app (<code class="inline">server.py</code>) with <code class="inline">/api/health</code>, <code class="inline">/api/documents</code>, <code class="inline">/api/upload</code>, and <code class="inline">/api/chat</code> endpoints.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">7</div>
+      <div class="step-content">
+        <h3>Build the React frontend</h3>
+        <p>Created a chat UI with sidebar, file upload, dark/light mode, markdown rendering, and intelligent chart detection + rendering using Recharts.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">8</div>
+      <div class="step-content">
+        <h3>Structure for deployment</h3>
+        <p>Separated into <code class="inline">backend/</code> and <code class="inline">frontend/</code> folders with independent dependency files, plus a <code class="inline">start.sh</code> for one-command local startup.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s4">
+  <div class="section-label">Section 04</div>
+  <h1>Project Architecture</h1>
+
+  <h2>System Architecture Diagram</h2>
+  <div class="arch-box">
+<span class="arch-user">┌─────────────────────────────────────────────────────┐</span>
+<span class="arch-user">│                     USER / BROWSER                   │</span>
+<span class="arch-user">│         http://localhost:5173  (React + Vite)         │</span>
+<span class="arch-user">└──────────────────────────┬──────────────────────────┘</span>
+                           <span class="arch-arrow">│ POST /api/chat (JSON)</span>
+                           <span class="arch-arrow">▼</span>
+<span class="arch-api">┌─────────────────────────────────────────────────────┐</span>
+<span class="arch-api">│               FastAPI Backend  :8001                 │</span>
+<span class="arch-api">│               server.py                              │</span>
+<span class="arch-api">│  /api/health  /api/documents  /api/upload /api/chat  │</span>
+<span class="arch-api">└──────────────────────────┬──────────────────────────┘</span>
+                           <span class="arch-arrow">│ ainvoke(messages)</span>
+                           <span class="arch-arrow">▼</span>
+<span class="arch-supervisor">┌─────────────────────────────────────────────────────┐</span>
+<span class="arch-supervisor">│            SUPERVISOR AGENT  (LangGraph)             │</span>
+<span class="arch-supervisor">│            supervisor.py → build_supervisor()        │</span>
+<span class="arch-supervisor">│            create_react_agent(llm, 4 tools)          │</span>
+<span class="arch-supervisor">└──────┬─────────────┬──────────────┬────────┬─────────┘</span>
+       <span class="arch-arrow">│</span>             <span class="arch-arrow">│</span>              <span class="arch-arrow">│</span>        <span class="arch-arrow">│</span>
+  <span class="arch-agent">ask_schema  ask_query  ask_analytics  ask_rag</span>
+       <span class="arch-arrow">▼</span>             <span class="arch-arrow">▼</span>              <span class="arch-arrow">▼</span>        <span class="arch-arrow">▼</span>
+<span class="arch-tool">┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐</span>
+<span class="arch-tool">│  Schema  │ │  Query   │ │Analytics │ │  RAG Agent   │</span>
+<span class="arch-tool">│  Agent   │ │  Agent   │ │  Agent   │ │  rag_agent.py│</span>
+<span class="arch-tool">└────┬─────┘ └────┬─────┘ └────┬─────┘ └──────┬───────┘</span>
+     <span class="arch-arrow">▼</span>             <span class="arch-arrow">▼</span>              <span class="arch-arrow">▼</span>              <span class="arch-arrow">▼</span>
+<span class="arch-db">MCP Tools via npx mcp-postgres-server</span>        <span class="arch-rag">search_knowledge_base</span>
+<span class="arch-db">list_schemas, list_tables, describe_table, query</span>    <span class="arch-rag">↓ FAISS index</span>
+     <span class="arch-arrow">▼</span>                                            <span class="arch-rag">HuggingFace Embeddings</span>
+<span class="arch-db">┌──────────────────────────┐</span>                  <span class="arch-rag">all-MiniLM-L6-v2</span>
+<span class="arch-db">│    PostgreSQL Database   │</span>                  <span class="arch-rag">↓ rag/documents/</span>
+<span class="arch-db">│    (Neon / any PG)       │</span>                  <span class="arch-rag">PDF, TXT, MD, DOCX</span>
+<span class="arch-db">│    11 tables, 2530+ rows │</span>
+<span class="arch-db">└──────────────────────────┘</span>
+  </div>
+
+  <h2 style="margin-top:28px;">Frontend Architecture</h2>
+  <div class="card">
+    <table>
+      <tr><th>Component</th><th>File</th><th>Responsibility</th></tr>
+      <tr><td>App root</td><td><span class="file-link">App.tsx</span></td><td>State management, API calls, layout</td></tr>
+      <tr><td>Sidebar</td><td><span class="file-link">Sidebar.tsx</span></td><td>Document list, upload widget, theme toggle</td></tr>
+      <tr><td>Chat messages</td><td><span class="file-link">ChatMessage.tsx</span></td><td>Renders markdown, tables, charts per message</td></tr>
+      <tr><td>Chat input</td><td><span class="file-link">ChatInput.tsx</span></td><td>Text input + send button</td></tr>
+      <tr><td>File upload</td><td><span class="file-link">FileUpload.tsx</span></td><td>Drag-drop file upload widget</td></tr>
+      <tr><td>Chart renderer</td><td><span class="file-link">DynamicChart.tsx</span></td><td>Recharts Bar/Line/Pie/Area with view switcher</td></tr>
+      <tr><td>Table renderer</td><td><span class="file-link">DataTable.tsx</span></td><td>Styled markdown table rendering</td></tr>
+      <tr><td>API service</td><td><span class="file-link">services/api.ts</span></td><td>Typed fetch wrappers for all endpoints</td></tr>
+      <tr><td>Chart detection</td><td><span class="file-link">utils/chartDetector.ts</span></td><td>Parses markdown tables → chart data + recommendation</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s5">
+  <div class="section-label">Section 05</div>
+  <h1>Technologies Deep Dive</h1>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">🐍 Python 3.14 + uv</h3>
+    <p><strong>What it is:</strong> Python is the programming language. <code class="inline">uv</code> is an extremely fast package manager (alternative to pip).</p>
+    <p><strong>Why I used it:</strong> Python has the richest AI/ML library ecosystem. uv installs dependencies ~10× faster than pip and manages virtual environments automatically.</p>
+    <pre><code><span class="cm"># Run backend without manually activating virtualenv</span>
+uv run mcp-server</code></pre>
+  </div>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">⚡ FastAPI</h3>
+    <p><strong>What it is:</strong> A modern Python web framework for building REST APIs.</p>
+    <p><strong>Why I used it:</strong> FastAPI is async-native (important for LangGraph's async agents), generates automatic API docs, and uses Python type hints for validation.</p>
+    <p><strong>Key endpoints in <code class="inline">server.py</code>:</strong></p>
+    <table>
+      <tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr>
+      <tr><td>/api/health</td><td>GET</td><td>Check if backend + MCP are ready</td></tr>
+      <tr><td>/api/documents</td><td>GET</td><td>List uploaded documents</td></tr>
+      <tr><td>/api/upload</td><td>POST</td><td>Upload a document, rebuild FAISS index</td></tr>
+      <tr><td>/api/chat</td><td>POST</td><td>Send a question, get AI answer</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">🕸️ LangGraph + LangChain</h3>
+    <p><strong>What it is:</strong> LangGraph builds stateful agent workflows as graphs. LangChain provides the building blocks (tools, models, prompts).</p>
+    <p><strong>Why I used it:</strong> <code class="inline">create_react_agent</code> from LangGraph implements the ReAct pattern — Reason + Act — where the agent decides which tool to call, calls it, reads the result, and decides again until it has a final answer.</p>
+    <p><strong>Pattern used:</strong> All 5 agents (supervisor + 4 specialists) are built with <code class="inline">create_react_agent</code>.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">🔌 MCP (Model Context Protocol)</h3>
+    <p><strong>What it is:</strong> A protocol that exposes external tools (like a database) to AI models in a standardized way.</p>
+    <p><strong>Why I used it:</strong> Instead of writing raw SQL queries manually, MCP provides tools the AI can call directly. <code class="inline">mcp-postgres-server</code> (via npx) translates those tool calls into real PostgreSQL queries.</p>
+    <p><strong>Tools MCP exposes:</strong> <code class="inline">list_schemas</code>, <code class="inline">list_tables</code>, <code class="inline">describe_table</code>, <code class="inline">query</code></p>
+    <p><strong>How it's connected in <code class="inline">postgres_client.py</code>:</strong></p>
+    <pre><code><span class="cls">MultiServerMCPClient</span>({
+  <span class="str">"postgres"</span>: {
+    <span class="str">"command"</span>: <span class="str">"npx"</span>,
+    <span class="str">"args"</span>: [<span class="str">"-y"</span>, <span class="str">"mcp-postgres-server"</span>],
+    <span class="str">"transport"</span>: <span class="str">"stdio"</span>,  <span class="cm"># communicates via stdin/stdout</span>
+    <span class="str">"env"</span>: {<span class="str">"DATABASE_URL"</span>: ..., <span class="str">"PG_ALLOW_WRITE"</span>: <span class="str">"false"</span>}
+  }
+})</code></pre>
+  </div>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">🤖 Groq LLM</h3>
+    <p><strong>What it is:</strong> Groq is a cloud AI provider offering fast LLM inference.</p>
+    <p><strong>Why I used it:</strong> Groq's API is fast (low latency) and free-tier friendly. The model <code class="inline">openai/gpt-oss-120b</code> handles complex multi-step reasoning for agent routing.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">🗃️ FAISS + HuggingFace Embeddings (RAG)</h3>
+    <p><strong>What FAISS is:</strong> Facebook's library for fast similarity search over vectors.</p>
+    <p><strong>What embeddings are:</strong> Numbers (vectors) that represent the meaning of text. Similar text has similar numbers, allowing "semantic" search.</p>
+    <p><strong>The model:</strong> <code class="inline">sentence-transformers/all-MiniLM-L6-v2</code> — a small, fast model that runs on CPU. Free, no API key needed.</p>
+    <p><strong>Why local FAISS:</strong> No external service needed. The index is saved to <code class="inline">.faiss_index/</code> on disk and loaded on startup.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">⚛️ React 18 + Vite + TypeScript</h3>
+    <p><strong>React:</strong> JavaScript library for building interactive UIs with components.</p>
+    <p><strong>Vite:</strong> Fast build tool that proxies <code class="inline">/api</code> calls to the backend during development — no CORS issues.</p>
+    <p><strong>TypeScript:</strong> Adds types to JavaScript, catching bugs at compile time.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="color:var(--accent);">📊 Recharts + Chart Detection</h3>
+    <p><strong>Recharts:</strong> A React chart library supporting Bar, Line, Area, and Pie charts.</p>
+    <p><strong>Chart detection (<code class="inline">chartDetector.ts</code>):</strong> Parses markdown tables from AI responses. If the table has numeric columns, it recommends a chart type (Bar for categories, Pie for distributions, Line for time-series) and renders it automatically.</p>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s6">
+  <div class="section-label">Section 06</div>
+  <h1>Actual Workflows</h1>
+
+  <h2>Workflow 1 — Document Upload + Indexing</h2>
+  <div class="card">
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>User uploads a file via the React sidebar</h3>
+          <p>Frontend calls <code class="inline">POST /api/upload</code> with the file as FormData</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h3>FastAPI receives the file (<code class="inline">server.py → upload_document()</code>)</h3>
+          <p>Saves it to <code class="inline">rag/documents/</code>. If it's a <code class="inline">.docx</code>, extracts text using python-docx and saves a companion <code class="inline">.txt</code> file so the existing loader can read it.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h3>Calls <code class="inline">rebuild_supervisor()</code></h3>
+          <p>This triggers the full RAG rebuild: load → chunk → embed → index → save</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h3>Document loading (<code class="inline">loader.py → load_documents()</code>)</h3>
+          <p>Scans <code class="inline">rag/documents/</code>. Loads <code class="inline">.pdf</code> with PyPDFLoader; <code class="inline">.txt</code> and <code class="inline">.md</code> with TextLoader.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-content">
+          <h3>Text splitting (<code class="inline">retriever.py → get_retriever(rebuild=True)</code>)</h3>
+          <p>Uses <code class="inline">RecursiveCharacterTextSplitter</code> with chunk_size=500, chunk_overlap=100. Splits documents into overlapping text chunks for better retrieval.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">6</div>
+        <div class="step-content">
+          <h3>Embedding generation (<code class="inline">embeddings.py → get_embeddings()</code>)</h3>
+          <p>Converts each chunk to a 384-dimensional vector using <code class="inline">all-MiniLM-L6-v2</code> on CPU.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">7</div>
+        <div class="step-content">
+          <h3>FAISS indexing (<code class="inline">vectorstore.py → create_vectorstore()</code>)</h3>
+          <p>Builds a FAISS index from all chunk embeddings. Saves it to <code class="inline">.faiss_index/</code> (index.faiss + index.pkl).</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">8</div>
+        <div class="step-content">
+          <h3>Supervisor rebuilt with fresh RAG tool</h3>
+          <p>All future questions can now retrieve content from the new document.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Workflow 2 — Database Query via MCP</h2>
+  <div class="card">
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>User types: "Who are the top 5 customers by spending?"</h3>
+          <p>Frontend calls <code class="inline">POST /api/chat</code> with the message and conversation history</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h3>Supervisor Agent receives the question</h3>
+          <p>Decides this is a data retrieval question → calls tool <code class="inline">ask_query_agent</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h3>Query Agent (<code class="inline">database_agent.py</code>) is invoked</h3>
+          <p>It has access only to the <code class="inline">query</code> MCP tool. It formulates SQL: <code class="inline">SELECT u.first_name, u.last_name, u.email, SUM(o.total_amount)... ORDER BY total DESC LIMIT 5</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h3>MCP tool <code class="inline">query</code> executes the SQL</h3>
+          <p>The <code class="inline">mcp-postgres-server</code> (running as a subprocess via npx stdio) runs the SQL against the real PostgreSQL database and returns the result rows as JSON.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-content">
+          <h3>Query Agent formats the response</h3>
+          <p>Returns a markdown table of the top 5 customers with names, emails, and spending totals.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">6</div>
+        <div class="step-content">
+          <h3>Supervisor returns the final answer to FastAPI</h3>
+          <p>FastAPI returns it in the <code class="inline">ChatResponse</code> JSON.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">7</div>
+        <div class="step-content">
+          <h3>Frontend renders the table + chart</h3>
+          <p><code class="inline">chartDetector.ts → detectVisualData()</code> parses the markdown table, finds numeric "spending" column, recommends a Bar chart. <code class="inline">DynamicChart.tsx</code> renders it with Recharts.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Workflow 3 — Document RAG Query</h2>
+  <div class="card">
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>User asks: "What is the return policy?"</h3>
+          <p>Supervisor decides this is a document question → calls <code class="inline">ask_rag_agent</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h3>RAG Agent is invoked (<code class="inline">rag_agent.py</code>)</h3>
+          <p>It calls <code class="inline">search_knowledge_base(question)</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h3>FAISS similarity search</h3>
+          <p>The question is embedded to a vector. FAISS finds the top-4 most similar document chunks (k=4) using cosine similarity.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h3>Retrieved chunks are returned with source file names</h3>
+          <p>Format: <code class="inline">Source: return_policy.txt\nContent: ...</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-content">
+          <h3>RAG Agent synthesizes an answer</h3>
+          <p>Uses the retrieved content to write a clear answer, citing the source document.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Workflow 4 — LLM Answer Generation</h2>
+  <div class="card">
+    <p>Every agent in this system uses the same Groq LLM (<code class="inline">ChatGroq</code>) with different prompts and tools:</p>
+    <ul>
+      <li>The LLM <strong>reads the question</strong> and its available tools</li>
+      <li>It <strong>decides</strong> which tool to call and with what argument</li>
+      <li>It <strong>calls the tool</strong>, reads the result</li>
+      <li>It <strong>decides again</strong> — call another tool, or write the final answer</li>
+      <li>This loop is the <strong>ReAct (Reason + Act)</strong> pattern</li>
+    </ul>
+    <p>The Groq API receives each message, processes it on specialized LLM hardware (LPUs), and returns the response extremely fast — typically under 2 seconds per step.</p>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s7">
+  <div class="section-label">Section 07</div>
+  <h1>Learning Roadmap</h1>
+
+  <table>
+    <tr>
+      <th>Topic</th>
+      <th>Description</th>
+      <th>Status in This Project</th>
+    </tr>
+    <tr>
+      <td><strong>Python</strong></td>
+      <td>Functions, classes, async/await, modules, decorators</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>APIs (REST)</strong></td>
+      <td>HTTP methods, JSON, request/response, status codes</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>FastAPI</strong></td>
+      <td>Routing, Pydantic models, lifespan, middleware, CORS</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td>Relational DB, tables, keys, constraints, indexes</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>SQL</strong></td>
+      <td>SELECT, JOIN, GROUP BY, ORDER BY, aggregate functions</td>
+      <td><span class="tag tag-green">Implemented (via AI-generated SQL)</span></td>
+    </tr>
+    <tr>
+      <td><strong>RAG (Retrieval-Augmented Generation)</strong></td>
+      <td>Document loading, chunking, embedding, retrieval, answer generation</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>Embeddings</strong></td>
+      <td>Vector representations of text, semantic similarity</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>Vector Databases</strong></td>
+      <td>FAISS for local storage and similarity search</td>
+      <td><span class="tag tag-green">Implemented (FAISS)</span></td>
+    </tr>
+    <tr>
+      <td><strong>pgvector</strong></td>
+      <td>Storing vectors inside PostgreSQL</td>
+      <td><span class="tag tag-red">Not Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>LangChain</strong></td>
+      <td>Tools, document loaders, text splitters, vector stores</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>LangGraph</strong></td>
+      <td>Stateful agent graphs, create_react_agent, ReAct loop</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>MCP (Model Context Protocol)</strong></td>
+      <td>Exposing tools to AI models via a standard protocol</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>LLMs (Large Language Models)</strong></td>
+      <td>Calling LLM APIs, prompt engineering, model selection</td>
+      <td><span class="tag tag-green">Implemented (Groq)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Streaming LLM responses</strong></td>
+      <td>Word-by-word streaming output</td>
+      <td><span class="tag tag-red">Not Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>React</strong></td>
+      <td>Components, state, hooks (useState, useEffect, useRef)</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>TypeScript</strong></td>
+      <td>Types, interfaces, generics in a React app</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>Recharts</strong></td>
+      <td>Bar, Line, Pie, Area charts with dynamic data</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>Tailwind CSS</strong></td>
+      <td>Utility-first styling, dark mode, responsive layout</td>
+      <td><span class="tag tag-green">Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>Authentication</strong></td>
+      <td>User login, sessions, JWT tokens</td>
+      <td><span class="tag tag-red">Not Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>Docker</strong></td>
+      <td>Containerized deployment</td>
+      <td><span class="tag tag-red">Not Implemented</span></td>
+    </tr>
+    <tr>
+      <td><strong>Multi-turn memory</strong></td>
+      <td>Persistent conversation history across sessions</td>
+      <td><span class="tag tag-yellow">Partial (last 8 messages per session)</span></td>
+    </tr>
+  </table>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s8">
+  <div class="section-label">Section 08</div>
+  <h1>Code Walkthrough</h1>
+
+  <h2>🔧 Backend startup — <code class="inline">server.py → lifespan()</code></h2>
+  <div class="card">
+    <p>When the FastAPI backend starts, the <code class="inline">lifespan</code> async context manager runs in this order:</p>
+    <pre><code><span class="num">1.</span> <span class="cls">ChatGroq</span>(model=<span class="str">"openai/gpt-oss-120b"</span>)       <span class="cm"># Create LLM</span>
+<span class="num">2.</span> <span class="kw">await</span> <span class="fn">get_postgres_tools</span>()               <span class="cm"># Start MCP subprocess</span>
+<span class="num">3.</span> <span class="fn">build_database_agents</span>(llm, mcp_tools)    <span class="cm"># 3 DB agents + tool wrappers</span>
+<span class="num">4.</span> <span class="fn">build_rag_agent</span>(llm, rebuild=<span class="kw">False</span>)      <span class="cm"># Load FAISS or build if missing</span>
+<span class="num">5.</span> <span class="fn">build_supervisor</span>(llm, all_agent_tools)   <span class="cm"># Supervisor with 4 tools</span></code></pre>
+    <p>Everything is stored in <code class="inline">app_state</code> dict so it persists across requests without reinitializing.</p>
+  </div>
+
+  <h2>🔌 MCP Connection — <code class="inline">postgres_client.py → create_mcp_client()</code></h2>
+  <div class="card">
+    <p><code class="inline">MultiServerMCPClient</code> spawns <code class="inline">npx -y mcp-postgres-server</code> as a subprocess and communicates with it over stdin/stdout (stdio transport). The server exposes PostgreSQL as AI-callable tools. <code class="inline">PG_ALLOW_WRITE=false</code> ensures only read-only SQL is permitted.</p>
+  </div>
+
+  <h2>🤖 Specialist Agents — <code class="inline">database_agent.py → build_database_agents()</code></h2>
+  <div class="card">
+    <p>Three agents are created with <code class="inline">create_react_agent</code>, each with a subset of MCP tools and a specific prompt:</p>
+    <table>
+      <tr><th>Agent variable</th><th>MCP tools given</th><th>Exposed as tool</th></tr>
+      <tr><td><code class="inline">schema_agent</code></td><td>list_schemas, list_tables, describe_table</td><td><code class="inline">ask_schema_agent</code></td></tr>
+      <tr><td><code class="inline">query_agent</code></td><td>query</td><td><code class="inline">ask_query_agent</code></td></tr>
+      <tr><td><code class="inline">analytics_agent</code></td><td>query, list_tables, describe_table</td><td><code class="inline">ask_analytics_agent</code></td></tr>
+    </table>
+    <p>Each specialist is wrapped with <code class="inline">@tool</code> so the supervisor can call it like any other tool.</p>
+  </div>
+
+  <h2>📄 RAG Agent — <code class="inline">rag_agent.py → build_rag_agent()</code></h2>
+  <div class="card">
+    <p>Calls <code class="inline">get_retriever(rebuild)</code> to get a FAISS retriever. Creates a <code class="inline">search_knowledge_base</code> tool that:</p>
+    <ol>
+      <li>Calls <code class="inline">retriever.invoke(question)</code> → gets top-4 chunks</li>
+      <li>Returns each chunk's content + source file name</li>
+    </ol>
+    <p>Wraps a <code class="inline">rag_agent</code> (ReAct) around it, then wraps that in an outer <code class="inline">ask_rag_agent</code> tool for the supervisor.</p>
+  </div>
+
+  <h2>🗃️ FAISS Pipeline — <code class="inline">retriever.py → get_retriever()</code></h2>
+  <div class="card">
+    <pre><code><span class="kw">if</span> rebuild:
+    documents = <span class="fn">load_documents</span>()           <span class="cm"># loader.py: PDF+TXT+MD</span>
+    chunks = <span class="cls">RecursiveCharacterTextSplitter</span>(
+        chunk_size=<span class="num">500</span>, chunk_overlap=<span class="num">100</span>
+    ).split_documents(documents)
+    vectorstore = <span class="fn">create_vectorstore</span>(chunks, embeddings)  <span class="cm"># saves to .faiss_index/</span>
+<span class="kw">else</span>:
+    vectorstore = <span class="fn">load_vectorstore</span>(embeddings)    <span class="cm"># loads from .faiss_index/</span>
+
+retriever = vectorstore.as_retriever(search_kwargs={<span class="str">"k"</span>: <span class="num">4</span>})</code></pre>
+  </div>
+
+  <h2>📊 Chart Detection — <code class="inline">chartDetector.ts → detectVisualData()</code></h2>
+  <div class="card">
+    <p>When an AI message arrives, <code class="inline">detectVisualData(markdown)</code> runs:</p>
+    <ol>
+      <li>Scans lines for pipe-delimited markdown table patterns</li>
+      <li>Validates the separator row (e.g. <code class="inline">--- | :---: | ---</code>)</li>
+      <li>Checks each column: if &gt;70% of rows are numeric → it's a data column</li>
+      <li>Non-numeric first column → category axis</li>
+      <li>Recommends: Pie if 2–8 rows with "status/category/distribution" in header; Line if time-based; Bar otherwise</li>
+    </ol>
+    <p>Returns a <code class="inline">DetectedVisual</code> object used by <code class="inline">ChatMessage.tsx</code> to render <code class="inline">DynamicChart.tsx</code>.</p>
+  </div>
+
+  <h2>🌐 API Service — <code class="inline">services/api.ts</code></h2>
+  <div class="card">
+    <p>Four exported async functions:</p>
+    <ul>
+      <li><code class="inline">checkHealth()</code> — GET /api/health</li>
+      <li><code class="inline">fetchDocuments()</code> — GET /api/documents</li>
+      <li><code class="inline">uploadDocument(file)</code> — POST /api/upload (multipart)</li>
+      <li><code class="inline">sendChatMessage(message, history)</code> — POST /api/chat; passes last 8 messages as history for follow-up context</li>
+    </ul>
+    <p>All use <code class="inline">VITE_API_URL</code> as base URL (defaults to empty string; Vite proxy handles <code class="inline">/api</code> → <code class="inline">localhost:8001</code> in dev).</p>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s9">
+  <div class="section-label">Section 09</div>
+  <h1>What I Learned</h1>
+
+  <div class="card-row">
+    <div class="card-sm">
+      <h3>🤖 AI Agents ≠ just chatbots</h3>
+      <p>Agents have tools they can call in a loop — reason, act, observe, repeat — until they reach a goal. This is fundamentally different from a simple prompt-response chat.</p>
+    </div>
+    <div class="card-sm">
+      <h3>🔌 MCP standardizes AI tool use</h3>
+      <p>Instead of writing custom database connectors for each AI, MCP provides a standard protocol. Any AI that understands MCP can query any MCP-compatible database.</p>
+    </div>
+    <div class="card-sm">
+      <h3>📐 RAG fills LLM knowledge gaps</h3>
+      <p>LLMs don't know about your specific business documents. RAG retrieves relevant document chunks and feeds them as context — grounding the AI in your actual data.</p>
+    </div>
+    <div class="card-sm">
+      <h3>⚡ Async is essential for multi-agent systems</h3>
+      <p>When multiple agents invoke each other, async/await ensures the system doesn't block. Python's asyncio + FastAPI's async endpoints make this manageable.</p>
+    </div>
+    <div class="card-sm">
+      <h3>🗂️ Separation of concerns</h3>
+      <p>Each specialist agent has one job and one set of tools. This makes the system easier to debug, test, and extend — adding a new agent doesn't break others.</p>
+    </div>
+    <div class="card-sm">
+      <h3>📊 Frontend can be smart about data</h3>
+      <p>Instead of hardcoding chart types, <code class="inline">chartDetector.ts</code> analyzes the AI's markdown output dynamically. The frontend adapts to whatever data the AI returns.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Challenges I solved</h3>
+    <ul>
+      <li><strong>FAISS index path resolution</strong> — Used <code class="inline">Path(__file__).resolve().parents[3]</code> to reliably find the index directory regardless of where the script is run from</li>
+      <li><strong>DOCX support in RAG</strong> — The document loader only handles PDF/TXT/MD. DOCX files are converted to .txt on upload using python-docx, without changing the loader logic</li>
+      <li><strong>Port conflicts</strong> — Added <code class="inline">PORT</code> env variable so the backend port is configurable</li>
+      <li><strong>CORS in development</strong> — Vite's proxy handles /api calls during development, eliminating browser CORS issues without changing backend CORS settings</li>
+      <li><strong>MCP subprocess lifecycle</strong> — The MCP server runs as a subprocess; the client must be initialized before any agent tools can be called, which is why it's in the FastAPI lifespan</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s10">
+  <div class="section-label">Section 10</div>
+  <h1>Interview Preparation</h1>
+
+  <h2>How to explain the project in 60 seconds</h2>
+  <div class="card" style="border-left:3px solid var(--accent);">
+    <p><em>"I built a multi-agent AI system that lets you chat with a PostgreSQL database and uploaded documents using plain English. The backend uses FastAPI and LangGraph to run a supervisor agent that routes questions to specialist agents — a schema agent, a query agent, an analytics agent, and a document retrieval agent. The database is connected via MCP (Model Context Protocol) using the mcp-postgres-server package. Documents are indexed using FAISS with HuggingFace embeddings. The frontend is React with Recharts and auto-detects when to render a chart from AI-returned markdown tables."</em></p>
+  </div>
+
+  <h2>Technical Q&amp;A</h2>
+
+  <div class="qa">
+    <div class="qa-q">What is MCP and why did you use it?</div>
+    <div class="qa-a">MCP (Model Context Protocol) is a standard for exposing external tools — like a database — to AI models. I used <code class="inline">mcp-postgres-server</code> via npx which runs as a subprocess and communicates over stdio. It exposes PostgreSQL as callable tools: list_schemas, list_tables, describe_table, and query. The LangChain MCP adapter bridges these tools into LangChain-compatible format, so agents can call them naturally.</div>
+  </div>
+
+  <div class="qa">
+    <div class="qa-q">What is RAG and how did you implement it?</div>
+    <div class="qa-a">RAG stands for Retrieval-Augmented Generation. Instead of asking the LLM to answer from memory, I retrieve relevant text chunks from documents first, then pass them as context to the LLM. I implemented it using: (1) document loading with PyPDFLoader and TextLoader, (2) chunking with RecursiveCharacterTextSplitter (500 chars, 100 overlap), (3) embedding with HuggingFace all-MiniLM-L6-v2, (4) FAISS for vector storage and similarity search (top-4 chunks), and (5) the retrieved content fed to the RAG agent as context.</div>
+  </div>
+
+  <div class="qa">
+    <div class="qa-q">What is LangGraph and how did you use it?</div>
+    <div class="qa-a">LangGraph is a library for building stateful, multi-step AI agent workflows. I used its <code class="inline">create_react_agent</code> function to build all 5 agents: 3 database agents, 1 RAG agent, and 1 supervisor. Each agent follows the ReAct pattern — it reasons about what tool to call, calls it, reads the result, and decides its next step. The supervisor agent gets the 4 specialist agents as its tools, allowing hierarchical delegation.</div>
+  </div>
+
+  <div class="qa">
+    <div class="qa-q">How does the supervisor know which agent to call?</div>
+    <div class="qa-a">The supervisor is a ReAct agent with a routing prompt that describes what each specialist does. The LLM reads the user's question and the tool descriptions, then decides which tool(s) to call. This is a form of "tool-calling" LLM behavior — no hardcoded if/else routing. The LLM reasons about the question type and delegates accordingly.</div>
+  </div>
+
+  <div class="qa">
+    <div class="qa-q">Why FAISS instead of a vector database like Pinecone?</div>
+    <div class="qa-a">FAISS is a local, file-based vector index — no external service, no API key, no cost. For an MVP with moderate document volume, it's simpler and faster to set up. The tradeoff is that it doesn't scale to millions of documents and can't be queried from multiple servers simultaneously. For production, I'd migrate to pgvector (PostgreSQL extension) or a managed service like Pinecone.</div>
+  </div>
+
+  <div class="qa">
+    <div class="qa-q">How does the frontend detect when to show a chart?</div>
+    <div class="qa-a">When an AI message arrives, <code class="inline">detectVisualData()</code> in <code class="inline">chartDetector.ts</code> scans the markdown for pipe-delimited table syntax. If it finds a valid table with at least 2 data rows, it checks each column: if more than 70% of values are numeric, it's a data column. The first non-numeric column is the category axis. Chart type is chosen by heuristics: Pie for small distributions (2-8 rows with "status/category" in the header), Line for time-based categories, Bar for everything else.</div>
+  </div>
+
+  <div class="qa">
+    <div class="qa-q">What would you change to make this production-ready?</div>
+    <div class="qa-a">I would: (1) add authentication (JWT tokens, user sessions), (2) replace FAISS with pgvector to store embeddings in the same PostgreSQL database, (3) add streaming responses so the UI shows output word by word, (4) add request rate limiting and error monitoring, (5) containerize with Docker Compose, and (6) add persistent conversation history stored in a database table.</div>
+  </div>
+
+  <div class="qa">
+    <div class="qa-q">Explain how a user question flows through the whole system.</div>
+    <div class="qa-a">User types a question → React frontend calls POST /api/chat → FastAPI passes it to the supervisor agent (LangGraph) → supervisor LLM decides which specialist agent tool to call → specialist agent calls MCP tools (for DB) or searches FAISS (for docs) → specialist returns structured text to supervisor → supervisor synthesizes a final answer → FastAPI returns it as JSON → React renders it as markdown, optionally as a table + chart.</div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="s11">
+  <div class="section-label">Section 11</div>
+  <h1>Next Learning Steps</h1>
+
+  <div class="card-row">
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">📡 Streaming Responses</h3>
+      <p>Add Server-Sent Events (SSE) to stream LLM output word-by-word. Use FastAPI's <code class="inline">StreamingResponse</code> and LangChain's <code class="inline">.astream()</code>.</p>
+    </div>
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">🗄️ pgvector</h3>
+      <p>Replace FAISS with <code class="inline">pgvector</code> — store embeddings in PostgreSQL itself. Use <code class="inline">langchain-postgres</code> PGVector. Eliminates a separate .faiss_index directory.</p>
+    </div>
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">🔐 Authentication</h3>
+      <p>Add JWT authentication with FastAPI. Create a users table, login endpoint, and protect /api/chat with token verification.</p>
+    </div>
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">🧠 Persistent Memory</h3>
+      <p>Save conversation history to PostgreSQL. Load past context on reconnect using LangChain's <code class="inline">PostgresChatMessageHistory</code>.</p>
+    </div>
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">🐳 Docker</h3>
+      <p>Write a <code class="inline">docker-compose.yml</code> that runs backend, frontend, and PostgreSQL together. Learn Dockerfile for each service.</p>
+    </div>
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">📝 Write Operations</h3>
+      <p>Set <code class="inline">PG_ALLOW_WRITE=true</code> and add a "confirm before writing" UI step. Build an INSERT/UPDATE agent with safety guardrails.</p>
+    </div>
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">🔭 Agent Observability</h3>
+      <p>Add LangSmith tracing to see every agent step, tool call, and token usage in a visual trace dashboard.</p>
+    </div>
+    <div class="card-sm">
+      <h3 style="color:var(--accent2);">🌐 Multi-Database Support</h3>
+      <p>Allow switching between multiple MCP database connections. Add a database selector to the sidebar.</p>
+    </div>
+  </div>
+
+  <hr />
+  <div class="card" style="text-align:center;padding:28px;">
+    <h2 style="font-size:18px;margin-bottom:8px;">You built an MVP — congratulations! 🎉</h2>
+    <p style="color:var(--muted);font-size:14px;">This is a real, working multi-agent AI system. Every component in it is used in production systems at real companies. You have covered Python, FastAPI, LangGraph, MCP, RAG, FAISS, React, TypeScript, Recharts, and PostgreSQL. That is a genuinely strong foundation.</p>
+  </div>
+</section>
+
+</main>
+
+<script>
+  // Active sidebar link on scroll
+  const sections = document.querySelectorAll('section[id]');
+  const links = document.querySelectorAll('#sidebar nav a');
+
+  function setActive() {
+    let current = '';
+    sections.forEach(s => {
+      if (window.scrollY >= s.offsetTop - 80) current = s.id;
+    });
+    links.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+    });
+  }
+
+  document.getElementById('main').addEventListener('scroll', setActive);
+  window.addEventListener('scroll', setActive);
+
+  // Scroll main, not window
+  document.querySelectorAll('#sidebar nav a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(a.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
+      document.getElementById('sidebar').classList.remove('open');
+    });
+  });
+</script>
+</body>
+</html>

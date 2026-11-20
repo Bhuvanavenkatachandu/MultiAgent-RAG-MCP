@@ -1,0 +1,13 @@
+Business Rules Documentation
+
+Add your application's business rules here.
+
+Examples:
+
+1. Customer information must be valid.
+2. Orders should reference existing customers.
+3. Purchase totals should be calculated correctly.
+4. Business reports must use actual database records.
+
+These are illustrative rules.
+Replace them with your actual business requirements.

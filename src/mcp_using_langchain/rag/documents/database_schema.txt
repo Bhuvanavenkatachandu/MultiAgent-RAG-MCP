@@ -1,0 +1,18 @@
+Database Schema Documentation
+
+This document should describe the actual PostgreSQL
+database schema.
+
+Add information about:
+
+1. Database table names.
+2. Table descriptions.
+3. Column names and data types.
+4. Primary keys.
+5. Foreign keys.
+6. Relationships between tables.
+
+IMPORTANT:
+Replace this template with the actual schema
+documentation of your PostgreSQL database.
+Do not treat this template as actual database metadata.

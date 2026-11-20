@@ -16,5 +16,9 @@ wheels/
 # Local storage & indexes
 .faiss_index/
 
+# Node.js
+node_modules/
+dist/
+
 # OS specific
 .DS_Store

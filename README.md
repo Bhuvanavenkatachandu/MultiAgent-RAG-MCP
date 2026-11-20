@@ -1,84 +1,110 @@
 # PostgreSQL RAG MCP Multi-Agent System
 
-A hierarchical multi-agent system combining **PostgreSQL database queries** via the Model Context Protocol (MCP) and **document retrieval** with FAISS RAG, featuring a modern React + Recharts frontend.
+A hierarchical multi-agent system combining **PostgreSQL database queries** via the Model Context Protocol (MCP) and **document retrieval** with FAISS RAG, featuring an interactive React + Recharts frontend.
 
-## Technologies
-
-- **Backend**: Python 3.14, FastAPI, LangGraph, LangChain, Groq LLM, FAISS Vector Store, HuggingFace Embeddings
-- **Database**: PostgreSQL with MCP (`mcp-postgres-server`) via `MultiServerMCPClient`
-- **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, Recharts, Lucide Icons
+The project is structured into independent **`backend/`** and **`frontend/`** folders for simplified modular deployment.
 
 ---
 
-## Agents Architecture
+## 📁 Repository Structure
 
-```
-User / Web Frontend
-         │
-    Supervisor (LangGraph ReAct)
-         ├──── Schema Agent     (PostgreSQL structural inspection)
-         ├──── Query Agent      (Read-only SQL retrieval)
-         ├──── Analytics Agent  (Aggregations, rankings & totals)
-         └──── RAG Agent        (FAISS vector search over PDF, DOCX, TXT, MD)
+```text
+MultiAgent-RAG-MCP/
+├── backend/                    # Python Backend (FastAPI + LangGraph + MCP + FAISS)
+│   ├── src/
+│   │   └── mcp_using_langchain/
+│   │       ├── server.py       # FastAPI HTTP REST API
+│   │       ├── main.py         # Terminal CLI chat loop
+│   │       ├── agents/         # Supervisor, Database, and RAG agents
+│   │       ├── mcp/            # PostgreSQL MCP client
+│   │       └── rag/            # Vector store, embeddings, loader
+│   ├── pyproject.toml          # uv package definition
+│   ├── requirements.txt        # Standard pip requirements for cloud hosting
+│   └── ecommerce_db.sql        # Database schema and seed data
+│
+├── frontend/                   # React Frontend (Vite + TypeScript + Recharts)
+│   ├── src/
+│   │   ├── components/         # Chat, Charts, Tables, Upload widgets
+│   │   ├── services/           # Backend API integration
+│   │   └── utils/              # Intelligent chart detection logic
+│   ├── package.json            # Node.js dependencies
+│   └── vite.config.ts          # Vite build config with backend proxy
+│
+├── ecommerce_db.sql            # Root copy of database schema and seed data
+├── start.sh                    # Single-command local startup script
+└── README.md
 ```
 
 ---
 
-## 🗄️ Database Setup & Restoration
+## 🚀 Easy Cloud Deployment (No Docker Needed)
 
-The repository includes a complete e-commerce dataset ([ecommerce_db.sql](ecommerce_db.sql)) featuring 11 tables, 100 users, and 2,530+ related records (orders, payments, shipments, products, categories, reviews, carts).
+### 1. Deploy the Backend (Render, Railway, Fly.io, etc.)
+- **Root Directory**: `backend`
+- **Python Version**: `3.14` (or 3.11+)
+- **Build Command**:
+  ```bash
+  pip install -r requirements.txt
+  ```
+- **Start Command**:
+  ```bash
+  uvicorn mcp_using_langchain.server:app --host 0.0.0.0 --port $PORT
+  ```
+- **Environment Variables**:
+  - `GROQ_API_KEY`: Your Groq API key
+  - `GROQ_MODEL`: `openai/gpt-oss-120b` (or your preferred Groq model)
+  - `DATABASE_URL`: Your PostgreSQL connection string (e.g. Neon)
+  - `PG_ALLOW_WRITE`: `false`
 
-To seed or restore your PostgreSQL database in the future:
-
-```bash
-# Seed or restore using your database connection string
-psql "$DATABASE_URL" -f ecommerce_db.sql
-```
-
-*(You can also load environment variables first if running directly from bash: `export $(grep -v '^#' .env | xargs) && psql "$DATABASE_URL" -f ecommerce_db.sql`)*
+### 2. Deploy the Frontend (Vercel, Netlify, Cloudflare Pages)
+- **Root Directory**: `frontend`
+- **Framework Preset**: `Vite`
+- **Build Command**:
+  ```bash
+  npm run build
+  ```
+- **Output Directory**: `dist`
+- **Environment Variables**:
+  - `VITE_API_URL`: URL of your deployed backend (e.g. `https://your-backend.onrender.com`)
 
 ---
 
-## Running the Application
+## 💻 Local Development
 
-### ⚡ Quick Start (Run Both with a Single Command)
+### Option A: Run Both with One Command
 ```bash
 ./start.sh
 ```
-This launches both the backend server (`http://localhost:8001`) and frontend app (`http://localhost:5173`), and cleanly closes both when you press <kbd>Ctrl</kbd> + <kbd>C</kbd>.
+Launches backend on `http://localhost:8001` and frontend on `http://localhost:5173`. Press <kbd>Ctrl</kbd> + <kbd>C</kbd> to stop both.
 
----
+### Option B: Run in Separate Terminals
 
-### Separate Terminal Windows
-
-#### Terminal 1: Backend API Server
+#### Terminal 1 (Backend):
 ```bash
+cd backend
 uv run mcp-server
 # Runs FastAPI on http://localhost:8001
 ```
 
-#### Terminal 2: Frontend Web Application
+#### Terminal 2 (Frontend):
 ```bash
 cd frontend
 npm run dev
 # Runs Vite React app on http://localhost:5173
 ```
 
----
-
-### Terminal CLI Mode (Interactive Terminal Chat)
+### Option C: Terminal CLI Chat Mode
 ```bash
+cd backend
 uv run python -m mcp_using_langchain.main
 ```
-Open **http://localhost:5173** in your browser.
 
 ---
 
-## Web Frontend Features
+## 🗄️ Database Setup & Restoration
 
-- **Document Upload**: Drag-and-drop or browse PDF and DOCX files to automatically index into the RAG vectorstore.
-- **AI Chatbot**: Real-time conversation with the multi-agent supervisor.
-- **Dynamic Recharts Visualizations**:
-  - Automatically renders **Bar**, **Line**, **Area**, or **Pie** charts when database query results contain numerical & categorical data.
-  - Interactive **[Bar | Line | Area | Pie | Table]** view switcher on all data answers.
-- **Dark & Light Mode**: Built-in theme switcher with clean, minimalist ChatGPT/Perplexity-inspired UI.
+To seed or restore your PostgreSQL instance with the 100 users, 11 tables, and 2,530+ e-commerce records:
+
+```bash
+psql "$DATABASE_URL" -f ecommerce_db.sql
+```

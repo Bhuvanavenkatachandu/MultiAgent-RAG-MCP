@@ -12,7 +12,7 @@ echo "=================================================="
 
 # 1. Start Backend in the background
 echo "1. Launching Backend Server on http://localhost:8001..."
-uv run mcp-server &
+(cd backend && uv run mcp-server) &
 BACKEND_PID=$!
 
 # Wait briefly for backend port

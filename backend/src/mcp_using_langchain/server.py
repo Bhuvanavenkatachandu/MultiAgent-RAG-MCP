@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import shutil
 from contextlib import asynccontextmanager
@@ -8,13 +10,15 @@ import docx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_groq import ChatGroq
 from pydantic import BaseModel
 
 from mcp_using_langchain.agents.database_agent import build_database_agents
 from mcp_using_langchain.agents.rag_agent import build_rag_agent
 from mcp_using_langchain.agents.supervisor import build_supervisor
-from mcp_using_langchain.mcp.postgres_client import get_postgres_tools
+from mcp_using_langchain.mcp.postgres_client import open_postgres_session
+from mcp_using_langchain.rag.embeddings import _configure_huggingface_auth
 from mcp_using_langchain.rag.loader import DOCUMENTS_DIR
 
 load_dotenv()
@@ -22,14 +26,17 @@ load_dotenv()
 app_state: Dict[str, Any] = {
     "llm": None,
     "supervisor": None,
+    "mcp_client": None,
     "mcp_tools": None,
     "database_tools": None,
     "rag_tool": None,
 }
 
+rebuild_lock = asyncio.Lock()
 
-def rebuild_supervisor():
-    """Rebuilds RAG tool and supervisor with latest document index."""
+
+def _rebuild_supervisor_sync():
+    """Synchronous core for rebuilding vector index and supervisor."""
     llm = app_state["llm"]
     database_tools = app_state["database_tools"]
     if not llm or not database_tools:
@@ -41,14 +48,23 @@ def rebuild_supervisor():
     app_state["supervisor"] = build_supervisor(llm, all_agent_tools)
 
 
+async def rebuild_supervisor():
+    """Rebuilds RAG tool and supervisor with latest document index in worker thread without blocking the event loop."""
+    async with rebuild_lock:
+        await asyncio.to_thread(_rebuild_supervisor_sync)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 0. Configure Hugging Face Hub authentication
+    _configure_huggingface_auth()
+
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing from environment")
 
-    # 1. Initialize LLM with max_tokens capped to stay safely within Groq OTPM limits
-    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "800"))
+    # 1. Initialize LLM with max_tokens sized for complete tables + analytical narratives
+    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "2048"))
     llm = ChatGroq(
         model=os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
         api_key=api_key,
@@ -56,24 +72,25 @@ async def lifespan(app: FastAPI):
     )
     app_state["llm"] = llm
 
-    # 2. Connect PostgreSQL MCP
-    client, mcp_tools = await get_postgres_tools()
-    app_state["mcp_tools"] = mcp_tools
+    # 2. Connect PostgreSQL MCP with a persistent session across the lifespan
+    async with open_postgres_session() as (client, mcp_tools):
+        app_state["mcp_client"] = client
+        app_state["mcp_tools"] = mcp_tools
 
-    # 3. Build specialist agents
-    database_tools = build_database_agents(llm, mcp_tools)
-    app_state["database_tools"] = database_tools
+        # 3. Build specialist agents
+        database_tools = build_database_agents(llm, mcp_tools)
+        app_state["database_tools"] = database_tools
 
-    rag_tool = build_rag_agent(llm, rebuild=False)
-    app_state["rag_tool"] = rag_tool
+        rag_tool = build_rag_agent(llm, rebuild=False)
+        app_state["rag_tool"] = rag_tool
 
-    # 4. Build supervisor
-    all_agent_tools = database_tools + [rag_tool]
-    supervisor = build_supervisor(llm, all_agent_tools)
-    app_state["supervisor"] = supervisor
+        # 4. Build supervisor
+        all_agent_tools = database_tools + [rag_tool]
+        supervisor = build_supervisor(llm, all_agent_tools)
+        app_state["supervisor"] = supervisor
 
-    print("FastAPI Backend initialized with Supervisor & PostgreSQL MCP")
-    yield
+        print("FastAPI Backend initialized with Supervisor & PostgreSQL MCP (persistent session)")
+        yield
 
 
 app = FastAPI(title="PostgreSQL RAG MCP API", lifespan=lifespan)
@@ -160,9 +177,9 @@ async def upload_document(file: UploadFile = File(...)):
                 status_code=500, detail=f"Failed to process DOCX file: {e}"
             )
 
-    # Rebuild index and supervisor
+    # Rebuild index and supervisor in worker thread without blocking event loop
     try:
-        rebuild_supervisor()
+        await rebuild_supervisor()
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"File saved, but indexing failed: {e}"
@@ -173,6 +190,79 @@ async def upload_document(file: UploadFile = File(...)):
         "status": "success",
         "message": f"'{filename}' uploaded and indexed successfully.",
     }
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    supervisor = app_state["supervisor"]
+    if not supervisor:
+        raise HTTPException(status_code=503, detail="Supervisor not initialized")
+
+    messages = []
+    if request.history:
+        for item in request.history:
+            messages.append({"role": item.role, "content": item.content})
+    messages.append({"role": "user", "content": request.message})
+
+    async def event_generator():
+        try:
+            tokens_streamed_count = 0
+            fallback_final_content = ""
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Processing question...'})}\n\n"
+            async for event in supervisor.astream_events({"messages": messages}, version="v2"):
+                kind = event.get("event")
+                if kind == "on_tool_start":
+                    name = event.get("name", "")
+                    if "query" in name or "database" in name:
+                        status_text = "Querying PostgreSQL database..."
+                    elif "analytics" in name:
+                        status_text = "Computing analytics on database..."
+                    elif "rag" in name or "knowledge" in name:
+                        status_text = "Searching knowledge base documents..."
+                    elif "schema" in name:
+                        status_text = "Inspecting database schema..."
+                    else:
+                        status_text = "Executing specialist tool..."
+                    yield f"data: {json.dumps({'type': 'status', 'message': status_text})}\n\n"
+                elif kind == "on_tool_end":
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Synthesizing response...'})}\n\n"
+                elif kind == "on_chain_end":
+                    out = event.get("data", {}).get("output")
+                    if isinstance(out, dict) and "messages" in out and out["messages"]:
+                        last_msg = out["messages"][-1]
+                        if hasattr(last_msg, "content") and last_msg.content:
+                            fallback_final_content = str(last_msg.content)
+                elif kind == "on_chat_model_stream":
+                    # Stream tokens from the supervisor agent node speaking to the user
+                    node = event.get("metadata", {}).get("langgraph_node")
+                    if node == "agent":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            if not getattr(chunk, "tool_calls", None) and not getattr(chunk, "tool_call_chunks", None):
+                                tokens_streamed_count += 1
+                                yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+
+            # Guaranteed delivery: if token streaming was bypassed/empty, deliver the complete final content
+            if tokens_streamed_count == 0 and fallback_final_content:
+                yield f"data: {json.dumps({'type': 'token', 'content': fallback_final_content})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'token', 'content': f'⚠️ Error: {str(e)}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)

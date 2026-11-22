@@ -15,6 +15,7 @@ import {
   checkHealth,
   fetchDocuments,
   sendChatMessage,
+  sendChatMessageStream,
   DocumentItem,
   ChatMessageItem,
 } from './services/api';
@@ -47,6 +48,7 @@ export function App() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [streamStatus, setStreamStatus] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [backendHealthy, setBackendHealthy] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -101,6 +103,11 @@ export function App() {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsChatLoading(true);
+    setStreamStatus('Specialist agents analyzing request...');
+
+    const assistantMsgId = String(Date.now() + 1);
+    let assistantMessageCreated = false;
+    let accumulatedContent = '';
 
     try {
       // Build history for follow-up support
@@ -109,18 +116,50 @@ export function App() {
         content: m.content,
       }));
 
-      const reply = await sendChatMessage(text, historyItems);
+      await sendChatMessageStream(
+        text,
+        historyItems,
+        (token) => {
+          accumulatedContent += token;
+          if (!assistantMessageCreated) {
+            assistantMessageCreated = true;
+            setIsChatLoading(false);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: assistantMsgId,
+                role: 'assistant',
+                content: accumulatedContent,
+              },
+            ]);
+          } else {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMsgId
+                  ? { ...msg, content: accumulatedContent }
+                  : msg
+              )
+            );
+          }
+        },
+        (status) => {
+          setStreamStatus(status);
+        }
+      );
 
-      const assistantMessage: Message = {
-        id: String(Date.now() + 1),
-        role: 'assistant',
-        content: reply,
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
+      if (!assistantMessageCreated) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: assistantMsgId,
+            role: 'assistant',
+            content: accumulatedContent || 'Unable to generate analysis. Please try rephrasing your query.',
+          },
+        ]);
+      }
     } catch (err: any) {
       const errorMsg: Message = {
-        id: String(Date.now() + 1),
+        id: String(Date.now() + 2),
         role: 'assistant',
         content: `Error: ${err.message || 'Unable to communicate with the supervisor agent.'}`,
         isError: true,
@@ -128,6 +167,7 @@ export function App() {
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsChatLoading(false);
+      setStreamStatus('');
     }
   };
 
@@ -228,7 +268,7 @@ export function App() {
                     </div>
                     <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                       <Loader2 className="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400" />
-                      <span>Specialist agents analyzing database & documents...</span>
+                      <span>{streamStatus || 'Specialist agents analyzing database & documents...'}</span>
                     </div>
                   </div>
                 </div>

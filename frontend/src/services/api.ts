@@ -70,3 +70,67 @@ export async function sendChatMessage(
   const data: ChatResponse = await res.json();
   return data.response;
 }
+
+export async function sendChatMessageStream(
+  message: string,
+  history: ChatMessageItem[] = [],
+  onToken: (token: string) => void,
+  onStatus?: (status: string) => void
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message,
+      history: history.slice(-8),
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Chat request failed' }));
+    throw new Error(err.detail || 'Chat request failed');
+  }
+
+  if (!res.body) throw new Error('ReadableStream not supported');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('data:')) continue;
+      const dataStr = trimmed.replace(/^data:\s*/, '').trim();
+      if (dataStr === '[DONE]') continue;
+
+      try {
+        const payload = JSON.parse(dataStr);
+        if (payload.type === 'token' && payload.content) {
+          fullText += payload.content;
+          onToken(payload.content);
+        } else if (payload.type === 'status' && payload.message && onStatus) {
+          onStatus(payload.message);
+        } else if (payload.type === 'error' && payload.message) {
+          throw new Error(payload.message);
+        }
+      } catch (e: any) {
+        if (dataStr.includes('"type":"error"') || dataStr.includes('"type": "error"')) {
+          throw e;
+        }
+      }
+    }
+  }
+
+  return fullText;
+}

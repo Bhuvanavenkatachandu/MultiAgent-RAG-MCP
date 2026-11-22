@@ -63,8 +63,8 @@ async def lifespan(app: FastAPI):
     if not api_key:
         raise ValueError("GROQ_API_KEY is missing from environment")
 
-    # 1. Initialize LLM with max_tokens sized for complete tables + analytical narratives
-    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "2048"))
+    # 1. Initialize LLM with max_tokens capped to stay within OTPM rate limits
+    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "800"))
     llm = ChatGroq(
         model=os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
         api_key=api_key,

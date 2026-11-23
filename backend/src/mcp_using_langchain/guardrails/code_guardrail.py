@@ -38,16 +38,29 @@ PROGRAMMING_LANGS = (
 CODE_GEN_PATTERNS = [
     # "write python code", "generate java code", "create a react component"
     re.compile(
-        rf"\b(?:write|generate|create|build|implement|develop|code|script|scaffold)\b"
+        rf"\b(?:get|give|show|provide|write|generate|create|build|implement|develop|code|script|scaffold)\b"
         rf"(?:\s+\w+){{0,3}}\s+{PROGRAMMING_LANGS}\b"
         rf"(?:\s+(?:code|program|script|function|class|method|app|component|hook|module|library|endpoint))?",
         re.IGNORECASE,
     ),
     # "write a program/script/function in python"
     re.compile(
-        rf"\b(?:write|generate|create|build|implement|develop|code)\b"
+        rf"\b(?:get|give|show|provide|write|generate|create|build|implement|develop|code)\b"
         rf"(?:\s+\w+){{0,3}}\s+(?:program|script|function|class|method|app|component|hook|module|endpoint|algorithm)"
         rf"\s+(?:in|using|with)\s+{PROGRAMMING_LANGS}\b",
+        re.IGNORECASE,
+    ),
+    # "get me code for ...", "give me code for ...", "write code for / to ..."
+    re.compile(
+        r"\b(?:get|give|show|provide|write|generate|create|build|implement|develop|code)\b"
+        r"(?:\s+(?:me|us|a|an|the|some))?\s+"
+        r"(?:code|program|script|function|class|method|algorithm)\s+"
+        r"(?:for|to|that|calculating|computing|doing|solving)\b",
+        re.IGNORECASE,
+    ),
+    # "code for sum of 2 numbers", "code to reverse a string", "code for fibonacci"
+    re.compile(
+        r"\bcode\s+(?:for|to|that)\s+\w+",
         re.IGNORECASE,
     ),
     # "write a program", "write a script", "code an app" (without database/SQL context)

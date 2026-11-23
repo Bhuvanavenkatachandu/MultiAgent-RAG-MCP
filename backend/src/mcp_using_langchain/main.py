@@ -3,13 +3,14 @@ import asyncio
 import os
 import uuid
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from langfuse import get_client, observe, propagate_attributes
-from langfuse.langchain import CallbackHandler
 from langchain_groq import ChatGroq
+from mcp_using_langchain.tracing import (
+    CallbackHandler,
+    flush_langfuse,
+    get_client,
+    observe,
+    propagate_attributes,
+)
 
 from mcp_using_langchain.mcp.postgres_client import (
     get_postgres_tools

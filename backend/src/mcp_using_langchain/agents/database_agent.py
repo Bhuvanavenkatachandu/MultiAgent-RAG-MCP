@@ -2,8 +2,7 @@
 import re
 from typing import List
 from langchain_core.tools import BaseTool, tool
-from langfuse import get_client, observe
-from langfuse.langchain import CallbackHandler
+from mcp_using_langchain.tracing import CallbackHandler, get_client, observe
 
 DATABASE_SCHEMA_SUMMARY = """
 PostgreSQL Tables & Schema Details:

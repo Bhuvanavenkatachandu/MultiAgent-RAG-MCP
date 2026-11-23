@@ -2,7 +2,7 @@
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter
 )
-from langfuse import get_client, observe
+from mcp_using_langchain.tracing import get_client, observe
 
 from .loader import load_documents
 from .embeddings import get_embeddings

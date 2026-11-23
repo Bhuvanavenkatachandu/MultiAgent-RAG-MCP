@@ -1,8 +1,7 @@
 
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from langfuse import get_client, observe
-from langfuse.langchain import CallbackHandler
+from mcp_using_langchain.tracing import CallbackHandler, get_client, observe
 
 from mcp_using_langchain.rag.retriever import get_retriever
 

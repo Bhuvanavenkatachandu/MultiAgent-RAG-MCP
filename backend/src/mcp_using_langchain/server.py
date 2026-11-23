@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import docx
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from langfuse import get_client, observe, propagate_attributes
-from langfuse.langchain import CallbackHandler
+from mcp_using_langchain.tracing import (
+    CallbackHandler,
+    flush_langfuse,
+    get_client,
+    observe,
+    propagate_attributes,
+)
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse

@@ -17,6 +17,10 @@ from pydantic import BaseModel
 from mcp_using_langchain.agents.database_agent import build_database_agents
 from mcp_using_langchain.agents.rag_agent import build_rag_agent
 from mcp_using_langchain.agents.supervisor import build_supervisor
+from mcp_using_langchain.guardrails import (
+    run_input_guardrails,
+    validate_and_sanitize_output,
+)
 from mcp_using_langchain.mcp.postgres_client import open_postgres_session
 from mcp_using_langchain.rag.embeddings import _configure_huggingface_auth
 from mcp_using_langchain.rag.loader import DOCUMENTS_DIR
@@ -230,6 +234,25 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
+    # Execute layered input guardrails before invoking supervisor
+    passed, rejection_msg, cleaned_query = run_input_guardrails(request.message)
+    if not passed:
+        async def rejection_generator():
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Evaluating request...'})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'content': rejection_msg or 'Request rejected by system guardrails.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            rejection_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     supervisor = app_state["supervisor"]
     if not supervisor:
         raise HTTPException(status_code=503, detail="Supervisor not initialized")
@@ -242,7 +265,7 @@ async def chat_stream(request: ChatRequest):
     if request.history:
         for item in request.history:
             messages.append({"role": item.role, "content": item.content})
-    messages.append({"role": "user", "content": request.message})
+    messages.append({"role": "user", "content": cleaned_query})
 
     async def event_generator():
         langfuse = get_client()
@@ -337,6 +360,14 @@ async def chat_stream(request: ChatRequest):
 @app.post("/api/chat", response_model=ChatResponse)
 @observe(name="chat-turn", as_type="agent", capture_input=False, capture_output=False)
 async def chat(request: ChatRequest):
+    # Execute layered input guardrails before invoking supervisor
+    passed, rejection_msg, cleaned_query = run_input_guardrails(request.message)
+    if not passed:
+        langfuse = get_client()
+        langfuse.update_current_span(output={"guardrail_rejection": rejection_msg})
+        flush_langfuse()
+        return ChatResponse(response=rejection_msg or "Request rejected by system guardrails.", role="assistant")
+
     supervisor = app_state["supervisor"]
     if not supervisor:
         raise HTTPException(status_code=503, detail="Supervisor not initialized")
@@ -346,13 +377,13 @@ async def chat(request: ChatRequest):
     tags = ["chat-json", "postgres-rag-mcp"] + (request.tags or [])
 
     langfuse = get_client()
-    langfuse.update_current_span(input={"user_message": request.message})
+    langfuse.update_current_span(input={"user_message": cleaned_query})
 
     messages = []
     if request.history:
         for item in request.history:
             messages.append({"role": item.role, "content": item.content})
-    messages.append({"role": "user", "content": request.message})
+    messages.append({"role": "user", "content": cleaned_query})
 
     try:
         with propagate_attributes(
@@ -367,9 +398,10 @@ async def chat(request: ChatRequest):
                 config={"callbacks": [handler], "run_name": "supervisor-agent"}
             )
             content = result["messages"][-1].content
-            langfuse.update_current_span(output={"assistant_response": content})
+            sanitized_content = validate_and_sanitize_output(content)
+            langfuse.update_current_span(output={"assistant_response": sanitized_content})
             flush_langfuse()
-            return ChatResponse(response=content, role="assistant")
+            return ChatResponse(response=sanitized_content, role="assistant")
     except Exception as e:
         langfuse.update_current_span(
             level="ERROR",

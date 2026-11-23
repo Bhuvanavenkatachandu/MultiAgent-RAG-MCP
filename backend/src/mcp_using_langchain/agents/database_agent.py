@@ -2,6 +2,7 @@ import re
 from typing import List
 from langchain_core.tools import BaseTool, tool
 from mcp_using_langchain.tracing import CallbackHandler, get_client, observe
+from mcp_using_langchain.guardrails import sanitize_tool_result, validate_sql_query_safety
 
 DATABASE_SCHEMA_SUMMARY = """
 PostgreSQL Tables & Schema Details:
@@ -99,14 +100,25 @@ Question: {question}"""
             )
             return err_msg
 
+        is_safe, sec_err = validate_sql_query_safety(sql)
+        if not is_safe:
+            err_msg = f"Security Policy Refusal: {sec_err}"
+            langfuse.update_current_span(
+                level="WARNING",
+                status_message="Sensitive column access rejected",
+                output={"error": err_msg, "sql": sql}
+            )
+            return err_msg
+
         try:
             with langfuse.start_as_current_observation(name="execute-postgres-query", as_type="tool") as query_span:
                 query_span.update(input={"sql": sql})
                 result = await query_tool.ainvoke({"sql": sql})
-                query_span.update(output={"result": str(result)[:2000]})
+                sanitized_result = sanitize_tool_result(result)
+                query_span.update(output={"result": str(sanitized_result)[:2000]})
 
-            output_text = f"Executed SQL: {sql}\n\nQuery Result:\n{result}"
-            langfuse.update_current_span(output={"sql": sql, "result": str(result)[:2000]})
+            output_text = f"Executed SQL: {sql}\n\nQuery Result:\n{sanitized_result}"
+            langfuse.update_current_span(output={"sql": sql, "result": str(sanitized_result)[:2000]})
             return output_text
         except Exception as e:
             err = f"Database query failed for SQL '{sql}': {str(e)}"
@@ -150,14 +162,25 @@ Question: {question}"""
             )
             return err_msg
 
+        is_safe, sec_err = validate_sql_query_safety(sql)
+        if not is_safe:
+            err_msg = f"Security Policy Refusal: {sec_err}"
+            langfuse.update_current_span(
+                level="WARNING",
+                status_message="Sensitive column access rejected",
+                output={"error": err_msg, "sql": sql}
+            )
+            return err_msg
+
         try:
             with langfuse.start_as_current_observation(name="execute-analytics-query", as_type="tool") as query_span:
                 query_span.update(input={"sql": sql})
                 result = await query_tool.ainvoke({"sql": sql})
-                query_span.update(output={"result": str(result)[:2000]})
+                sanitized_result = sanitize_tool_result(result)
+                query_span.update(output={"result": str(sanitized_result)[:2000]})
 
-            output_text = f"Executed SQL: {sql}\n\nAnalytics Result:\n{result}"
-            langfuse.update_current_span(output={"sql": sql, "result": str(result)[:2000]})
+            output_text = f"Executed SQL: {sql}\n\nAnalytics Result:\n{sanitized_result}"
+            langfuse.update_current_span(output={"sql": sql, "result": str(sanitized_result)[:2000]})
             return output_text
         except Exception as e:
             err = f"Analytics query failed for SQL '{sql}': {str(e)}"

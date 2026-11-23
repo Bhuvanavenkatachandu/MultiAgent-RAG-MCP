@@ -20,6 +20,11 @@ from mcp_using_langchain.agents.supervisor import (
     build_supervisor
 )
 
+from mcp_using_langchain.guardrails import (
+    run_input_guardrails,
+    validate_and_sanitize_output,
+)
+
 from mcp_using_langchain.tracing import (
     CallbackHandler,
     flush_langfuse,
@@ -98,7 +103,9 @@ async def run():
             print("Goodbye!")
             break
 
-        if not question:
+        passed, rejection_msg, cleaned_question = run_input_guardrails(question)
+        if not passed:
+            print(f"\nAssistant:\n{rejection_msg}")
             continue
 
         try:
@@ -113,15 +120,17 @@ async def run():
                         "messages": [
                             {
                                 "role": "user",
-                                "content": question
+                                "content": cleaned_question
                             }
                         ]
                     },
                     config={"callbacks": [handler], "run_name": "supervisor-cli"}
                 )
 
+            raw_content = response["messages"][-1].content
+            sanitized_content = validate_and_sanitize_output(raw_content)
             print("\nAssistant:")
-            print(response["messages"][-1].content)
+            print(sanitized_content)
             flush_langfuse()
 
         except Exception as error:

@@ -3,6 +3,7 @@ from langgraph.prebuilt import create_react_agent
 
 from mcp_using_langchain.rag.retriever import get_retriever
 from mcp_using_langchain.tracing import CallbackHandler, observe
+from mcp_using_langchain.guardrails import mask_pii_text
 
 
 def build_rag_agent(llm, rebuild=False):
@@ -27,9 +28,11 @@ def build_rag_agent(llm, rebuild=False):
                 "source", "Unknown"
             )
 
+            sanitized_content = mask_pii_text(doc.page_content)
+
             results.append(
                 f"Source: {source}\n"
-                f"Content: {doc.page_content}"
+                f"Content: {sanitized_content}"
             )
 
         return "\n\n".join(results)

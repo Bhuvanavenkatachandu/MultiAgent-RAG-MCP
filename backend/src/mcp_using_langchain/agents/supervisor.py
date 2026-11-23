@@ -44,15 +44,33 @@ def build_supervisor(llm, agent_tools):
         - Do not invent database or document results.
         - When a specialist returns query results or document data, IMMEDIATELY synthesize the final user-facing response. Do NOT make additional tool calls.
 
-        DATA ANALYSIS & VISUALIZATION INSTRUCTIONS:
-        - When the user asks for data analysis, summaries, reports, rankings, metrics, distributions, or comparisons:
-          1. Introductory Context: Provide a brief introductory summary explaining the metric, scope, and key headline finding.
-          2. Clean Markdown Table: Present the data as a clean, structured Markdown table with exact column headers and numerical values (this automatically powers the interactive charts and data tables in the UI).
-          3. In-Depth Analytical Narrative (MANDATORY): Always provide a detailed analytical breakdown following the table:
-             - Identify top performers, lowest performers, and percentage distribution/shares.
-             - Highlight significant trends, patterns, anomalies, and comparisons across categories or periods.
-             - Provide actionable business takeaways, insights, or conclusions based strictly on the retrieved data.
-        - NEVER output only a bare Markdown table or raw numbers without an accompanying analytical narrative.
+        STRUCTURED BUSINESS INTELLIGENCE RESPONSE SPECIFICATION:
+        When answering analytical queries, business questions, rankings, metrics, distributions, or comparisons, you MUST structure your final synthesized response using the following standard sections:
+
+        ### Executive Summary
+        A clear, high-impact 1-2 sentence executive briefing summarizing the primary takeaway and headline metric.
+
+        ### Key Metrics
+        Extract 2 to 4 key quantitative KPIs directly from the actual retrieved data:
+        - Metric: [Metric Name] | Value: [Formatted Value, e.g. $1,245,000 or 4,320] | Context: [Brief context, e.g. Across 10 categories]
+
+        ### Data Table
+        Present the data as a clean, complete Markdown table with exact column names and un-truncated numbers (this powers interactive charts, filters, and sortable tables in the UI).
+        If the query returned zero records, explicitly output: "0 records found matching the query criteria."
+
+        ### Analytical Insights
+        Provide 3 to 5 distinct, bulleted business insights strictly categorized by type:
+        - Top Performer: [Identify leading entities with exact numbers from the data]
+        - Trend: [Highlight observed growth, distribution shares, or chronological patterns]
+        - Comparison: [Compare relative performance between categories, segments, or periods]
+        - Anomaly: [Highlight notable outliers, unexpected drops, or zero values if present]
+        - Recommendation: [State an actionable, data-backed strategic recommendation clearly separated from observed facts]
+
+        DATA INTEGRITY & QUALITY RULES:
+        - NEVER invent, extrapolate, or hallucinate numbers, percentages, or statistics not present in or directly calculable from the SQL results.
+        - Avoid redundant or repetitive commentary between the summary and the insights.
+        - If query results are empty (0 rows), state clearly that 0 records were returned without inventing data.
+        - When questions are purely documentation-related (policies, FAQs, guides), answer directly and concisely from the retrieved documents without forcing empty tables.
         - Present the final response clearly and professionally.
 
         You must use the specialist agents

@@ -50,32 +50,39 @@ function isDateOrTime(val: string): boolean {
  */
 export function detectVisualData(markdown: string): DetectedVisual {
   const lines = markdown.split('\n');
-  const tableLines: { index: number; line: string }[] = [];
 
   // 1. Identify contiguous markdown table lines
-  let inTable = false;
+  let tableLines: { index: number; line: string }[] = [];
   let tableStartIndex = -1;
   let tableEndIndex = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    const isPipeLine = trimmed.startsWith('|') || (trimmed.includes('|') && trimmed.split('|').length >= 3);
+    // A markdown table line starts with | or ends with | and does not start with bullet points
+    const isPipeLine =
+      !trimmed.startsWith('- ') &&
+      !trimmed.startsWith('* ') &&
+      (trimmed.startsWith('|') || (trimmed.endsWith('|') && trimmed.split('|').length >= 3));
 
     if (isPipeLine) {
-      if (!inTable) {
-        inTable = true;
+      if (tableStartIndex === -1) {
         tableStartIndex = i;
       }
       tableLines.push({ index: i, line: trimmed });
       tableEndIndex = i;
-    } else if (inTable) {
-      // Table ended
-      break;
+    } else {
+      if (tableLines.length >= 2) {
+        break;
+      }
+      // Reset if only 1 stray pipe line
+      tableLines = [];
+      tableStartIndex = -1;
+      tableEndIndex = -1;
     }
   }
 
-  // Need at least header, separator line, and at least 2 data rows for meaningful visual
-  if (tableLines.length < 4 || tableStartIndex === -1) {
+  // Need at least header and at least 1 data row
+  if (tableLines.length < 2 || tableStartIndex === -1) {
     return {
       hasVisual: false,
       tableData: null,
@@ -98,11 +105,7 @@ export function detectVisualData(markdown: string): DetectedVisual {
   }
 
   const headers = rawRows[0];
-  const separator = rawRows[1];
-
-  // Validate separator row (e.g. --- | :---: | ---)
-  const isSeparatorValid = separator.every((c) => /^:?-+:?$/.test(c));
-  if (!isSeparatorValid || headers.length < 2) {
+  if (headers.length < 2) {
     return {
       hasVisual: false,
       tableData: null,
@@ -112,7 +115,19 @@ export function detectVisualData(markdown: string): DetectedVisual {
     };
   }
 
-  const dataRowsRaw = rawRows.slice(2);
+  // Check if second row is a Markdown separator (e.g. --- | :---: | ---)
+  const isSeparatorPresent = rawRows.length > 1 && rawRows[1].every((c) => /^:?-+:?$/.test(c));
+  const dataRowsRaw = isSeparatorPresent ? rawRows.slice(2) : rawRows.slice(1);
+
+  if (dataRowsRaw.length === 0) {
+    return {
+      hasVisual: false,
+      tableData: null,
+      chartRecommendation: null,
+      textBefore: markdown,
+      textAfter: '',
+    };
+  }
   const rows: Record<string, any>[] = [];
 
   for (const rowCells of dataRowsRaw) {

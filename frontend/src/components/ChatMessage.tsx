@@ -2,9 +2,8 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { User, Sparkles, Copy, Check, Terminal } from 'lucide-react';
-import { detectVisualData } from '../utils/chartDetector';
-import { DynamicChart } from './DynamicChart';
-import { DataTable } from './DataTable';
+import { parseAnalyticalReport } from '../utils/reportParser';
+import { StructuredReportView } from './StructuredReportView';
 
 export interface Message {
   id: string;
@@ -27,8 +26,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  // Inspect message content for tabular/numerical data for charts
-  const visualInfo = !isUser && !message.isError ? detectVisualData(message.content) : null;
+  // Inspect message content for structured analytical report
+  const report = !isUser && !message.isError ? parseAnalyticalReport(message.content) : null;
 
   return (
     <div
@@ -80,37 +79,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-sm">
               {message.content}
             </div>
-          ) : visualInfo && visualInfo.hasVisual && visualInfo.tableData ? (
-            /* Assistant message with structured visual data */
-            <div className="space-y-4">
-              {/* Text explanation before the visual data */}
-              {visualInfo.textBefore && (
-                <div className="prose dark:prose-invert prose-sm max-w-none text-slate-800 dark:text-slate-200">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {visualInfo.textBefore}
-                  </ReactMarkdown>
-                </div>
-              )}
-
-              {/* Dynamic Chart if numerical data exists, else clean DataTable */}
-              {visualInfo.chartRecommendation ? (
-                <DynamicChart
-                  tableData={visualInfo.tableData}
-                  recommendation={visualInfo.chartRecommendation}
-                />
-              ) : (
-                <DataTable data={visualInfo.tableData} />
-              )}
-
-              {/* Text explanation after the visual data */}
-              {visualInfo.textAfter && (
-                <div className="prose dark:prose-invert prose-sm max-w-none text-slate-800 dark:text-slate-200">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {visualInfo.textAfter}
-                  </ReactMarkdown>
-                </div>
-              )}
-            </div>
+          ) : report && report.isStructuredReport ? (
+            /* Structured Business Intelligence Report */
+            <StructuredReportView report={report} />
           ) : (
             /* Standard Markdown rendering */
             <div className="prose dark:prose-invert prose-sm md:prose-base max-w-none text-slate-800 dark:text-slate-200 leading-relaxed">
@@ -156,7 +127,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                           </button>
                         </div>
                         <pre className="p-3.5 overflow-x-auto">
-                          <code>{children}</code>
+                          <code>{codeString}</code>
                         </pre>
                       </div>
                     );

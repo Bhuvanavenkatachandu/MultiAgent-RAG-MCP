@@ -28,6 +28,10 @@ from mcp_using_langchain.guardrails.pii_guardrail import (
     validate_sql_query_safety,
 )
 from mcp_using_langchain.guardrails.output_guardrail import (
+    OutputGuardrailViolation,
+    OutputValidationResult,
+    StreamingGuardrailBuffer,
+    check_output_safety,
     validate_and_sanitize_output,
 )
 
@@ -77,5 +81,9 @@ __all__ = [
     "sanitize_tool_result",
     "validate_sql_query_safety",
     "validate_and_sanitize_output",
+    "check_output_safety",
+    "OutputValidationResult",
+    "StreamingGuardrailBuffer",
+    "OutputGuardrailViolation",
     "run_input_guardrails",
 ]

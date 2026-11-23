@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import docx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_groq import ChatGroq
@@ -18,6 +18,9 @@ from mcp_using_langchain.agents.database_agent import build_database_agents
 from mcp_using_langchain.agents.rag_agent import build_rag_agent
 from mcp_using_langchain.agents.supervisor import build_supervisor
 from mcp_using_langchain.guardrails import (
+    OutputGuardrailViolation,
+    StreamingGuardrailBuffer,
+    check_output_safety,
     run_input_guardrails,
     validate_and_sanitize_output,
 )
@@ -233,7 +236,7 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, raw_request: Request):
     # Execute layered input guardrails before invoking supervisor
     passed, rejection_msg, cleaned_query = run_input_guardrails(request.message)
     if not passed:
@@ -281,16 +284,29 @@ async def chat_stream(request: ChatRequest):
                 tags=tags,
             ):
                 handler = CallbackHandler()
+                buffer_manager = StreamingGuardrailBuffer(
+                    min_chunk_size=30,
+                    max_chunk_size=120,
+                    overlap_size=40,
+                )
+                tokens_streamed_count = 0
+                fallback_final_content = ""
+                accumulated_tokens = []
+                violation_detected = False
+                client_disconnected = False
+
                 try:
-                    tokens_streamed_count = 0
-                    fallback_final_content = ""
-                    accumulated_tokens = []
                     yield f"data: {json.dumps({'type': 'status', 'message': 'Processing question...'})}\n\n"
                     async for event in supervisor.astream_events(
                         {"messages": messages},
                         version="v2",
                         config={"callbacks": [handler], "run_name": "supervisor-stream-agent"}
                     ):
+                        # Detect client disconnection to avoid running generation indefinitely
+                        if await raw_request.is_disconnected():
+                            client_disconnected = True
+                            break
+
                         kind = event.get("event")
                         if kind == "on_tool_start":
                             name = event.get("name", "")
@@ -320,20 +336,80 @@ async def chat_stream(request: ChatRequest):
                                 chunk = event.get("data", {}).get("chunk")
                                 if chunk and hasattr(chunk, "content") and chunk.content:
                                     if not getattr(chunk, "tool_calls", None) and not getattr(chunk, "tool_call_chunks", None):
-                                        tokens_streamed_count += 1
                                         token_str = str(chunk.content)
-                                        accumulated_tokens.append(token_str)
-                                        yield f"data: {json.dumps({'type': 'token', 'content': token_str})}\n\n"
+                                        try:
+                                            ready_chunks = buffer_manager.add_token(token_str)
+                                            for ready_chunk in ready_chunks:
+                                                tokens_streamed_count += 1
+                                                accumulated_tokens.append(ready_chunk)
+                                                yield f"data: {json.dumps({'type': 'token', 'content': ready_chunk})}\n\n"
+                                        except OutputGuardrailViolation as violation:
+                                            violation_detected = True
+                                            buffer_manager.clear()
+                                            stream_span.update(
+                                                level="ERROR",
+                                                status_message=f"Output Guardrail Violation: {violation.reason}",
+                                                output={"guardrail_violation": violation.reason}
+                                            )
+                                            yield f"data: {json.dumps({'type': 'error', 'message': violation.message})}\n\n"
+                                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                                            yield "data: [DONE]\n\n"
+                                            break
 
-                    # Guaranteed delivery: if token streaming was bypassed/empty, deliver the complete final content
-                    final_response = "".join(accumulated_tokens) if tokens_streamed_count > 0 else fallback_final_content
+                    # If client disconnected or guardrail violation occurred, terminate without flushing unvalidated text
+                    if client_disconnected or violation_detected:
+                        flush_langfuse()
+                        return
+
+                    # Validate and flush any remaining buffered text at end of stream
+                    try:
+                        remaining_chunks = buffer_manager.flush()
+                        for remaining_chunk in remaining_chunks:
+                            tokens_streamed_count += 1
+                            accumulated_tokens.append(remaining_chunk)
+                            yield f"data: {json.dumps({'type': 'token', 'content': remaining_chunk})}\n\n"
+                    except OutputGuardrailViolation as violation:
+                        violation_detected = True
+                        buffer_manager.clear()
+                        stream_span.update(
+                            level="ERROR",
+                            status_message=f"Output Guardrail Violation on flush: {violation.reason}",
+                            output={"guardrail_violation": violation.reason}
+                        )
+                        yield f"data: {json.dumps({'type': 'error', 'message': violation.message})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        flush_langfuse()
+                        return
+
+                    # Guaranteed delivery: if token streaming was bypassed/empty, validate and deliver fallback content
                     if tokens_streamed_count == 0 and fallback_final_content:
-                        yield f"data: {json.dumps({'type': 'token', 'content': fallback_final_content})}\n\n"
+                        validation = check_output_safety(fallback_final_content)
+                        if not validation.is_safe:
+                            stream_span.update(
+                                level="ERROR",
+                                status_message=f"Output Guardrail Violation on fallback: {validation.reason}",
+                                output={"guardrail_violation": validation.reason}
+                            )
+                            yield f"data: {json.dumps({'type': 'error', 'message': validation.rejection_message or 'Output blocked by system guardrails.'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                            yield "data: [DONE]\n\n"
+                            flush_langfuse()
+                            return
 
+                        safe_fallback = validation.sanitized_text if validation.sanitized_text else fallback_final_content
+                        accumulated_tokens.append(safe_fallback)
+                        yield f"data: {json.dumps({'type': 'token', 'content': safe_fallback})}\n\n"
+
+                    final_response = "".join(accumulated_tokens)
                     stream_span.update(output={"assistant_response": final_response})
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     yield "data: [DONE]\n\n"
                     flush_langfuse()
+                except asyncio.CancelledError:
+                    # Client aborted the request during generation
+                    flush_langfuse()
+                    return
                 except Exception as e:
                     stream_span.update(
                         level="ERROR",

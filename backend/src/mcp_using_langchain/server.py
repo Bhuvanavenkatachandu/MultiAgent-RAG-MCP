@@ -26,6 +26,7 @@ from mcp_using_langchain.guardrails import (
     validate_and_sanitize_output,
 )
 from mcp_using_langchain.mcp.postgres_client import open_postgres_session
+from mcp_using_langchain.cache import cache_manager
 from mcp_using_langchain.rag.embeddings import _configure_huggingface_auth
 from mcp_using_langchain.rag.loader import DOCUMENTS_DIR
 from mcp_using_langchain.tracing import (
@@ -56,6 +57,9 @@ def _rebuild_supervisor_sync():
     database_tools = app_state["database_tools"]
     if not llm or not database_tools:
         return
+
+    # Invalidate stale RAG search cache when documents are modified or re-indexed
+    cache_manager.invalidate_rag_cache()
 
     rag_tool = build_rag_agent(llm, rebuild=True)
     app_state["rag_tool"] = rag_tool

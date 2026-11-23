@@ -4,6 +4,7 @@ from langchain_core.tools import BaseTool, tool
 from mcp_using_langchain.tracing import CallbackHandler, get_client, observe
 from mcp_using_langchain.guardrails import sanitize_tool_result, validate_sql_query_safety
 from mcp_using_langchain.llm import extract_text_content
+from mcp_using_langchain.cache import cache_manager
 
 DATABASE_SCHEMA_SUMMARY = """
 PostgreSQL Tables & Schema Details:
@@ -73,6 +74,18 @@ def build_database_agents(llm, mcp_tools: List[BaseTool]):
         langfuse = get_client()
         langfuse.update_current_span(input={"question": question})
 
+        # Check Cache (Component 1: SQL Query Results, ~15 MB target allocation)
+        # Avoids ~1,600 ms of repeated LLM generation and database roundtrips
+        cached = cache_manager.get_sql_result(question)
+        if cached and isinstance(cached, dict):
+            cached_sql = cached.get("sql", "")
+            cached_result = cached.get("result", "")
+            output_text = f"Executed SQL (Cached): {cached_sql}\n\nQuery Result:\n{cached_result}"
+            langfuse.update_current_span(
+                output={"sql": cached_sql, "result": str(cached_result)[:2000], "cache_hit": True}
+            )
+            return output_text
+
         prompt = f"""You are a PostgreSQL {role_title}.
 {instruction}
 {DATABASE_SCHEMA_SUMMARY}
@@ -117,7 +130,9 @@ Question: {question}"""
                 query_span.update(output={"result": str(sanitized_result)[:2000]})
 
             output_text = f"Executed SQL: {sql}\n\nQuery Result:\n{sanitized_result}"
-            langfuse.update_current_span(output={"sql": sql, "result": str(sanitized_result)[:2000]})
+            # Cache analytical query and sanitized result for 10 minutes (TTL)
+            cache_manager.set_sql_result(question, sql=sql, result=str(sanitized_result))
+            langfuse.update_current_span(output={"sql": sql, "result": str(sanitized_result)[:2000], "cache_hit": False})
             return output_text
         except Exception as e:
             err = f"Database query failed for SQL '{sql}': {str(e)}"

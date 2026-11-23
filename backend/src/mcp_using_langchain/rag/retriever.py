@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from mcp_using_langchain.tracing import get_client, observe
+from mcp_using_langchain.cache import cache_manager
 
 from .loader import load_documents
 from .embeddings import get_embeddings
@@ -116,13 +117,28 @@ class HybridRetriever:
     def retrieve_faiss(self, query: str, top_k: int = 5) -> Tuple[List[Document], float]:
         """Experiment 1: Pure FAISS vector similarity search."""
         t0 = time.perf_counter()
+        cached = cache_manager.get_rag_results(query, mode=f"faiss:{top_k}")
+        if cached is not None:
+            docs = [Document(page_content=item["page_content"], metadata=item.get("metadata", {})) for item in cached]
+            return docs, (time.perf_counter() - t0) * 1000.0
+
         results = self.vectorstore.similarity_search(query, k=top_k)
         latency_ms = (time.perf_counter() - t0) * 1000.0
+        cache_manager.set_rag_results(
+            query,
+            [{"page_content": d.page_content, "metadata": d.metadata} for d in results],
+            mode=f"faiss:{top_k}",
+        )
         return results, latency_ms
 
     def retrieve_hybrid(self, query: str, top_k: int = 5) -> Tuple[List[Document], float]:
         """Experiment 2: BM25 + FAISS Hybrid Retrieval with Reciprocal Rank Fusion."""
         t0 = time.perf_counter()
+        # Check Cache (Component 2: FAISS + BM25 Hybrid Index, ~10 MB budget)
+        cached = cache_manager.get_rag_results(query, mode=f"hybrid:{top_k}")
+        if cached is not None:
+            docs = [Document(page_content=item["page_content"], metadata=item.get("metadata", {})) for item in cached]
+            return docs, (time.perf_counter() - t0) * 1000.0
 
         # FAISS search (fetch top 10 candidates)
         faiss_docs = self.vectorstore.similarity_search(query, k=min(10, len(self.chunks)))
@@ -151,12 +167,24 @@ class HybridRetriever:
         sorted_contents = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         results = [doc_map[c] for c, _ in sorted_contents]
         latency_ms = (time.perf_counter() - t0) * 1000.0
+
+        cache_manager.set_rag_results(
+            query,
+            [{"page_content": d.page_content, "metadata": d.metadata} for d in results],
+            mode=f"hybrid:{top_k}",
+        )
         return results, latency_ms
 
     def retrieve_hybrid_rerank(
         self, query: str, top_k: int = 5, score_threshold: float = -6.0
     ) -> Tuple[List[Document], float, float]:
         """Experiment 3: Hybrid Retrieval + Cross-Encoder Reranking with threshold filtering."""
+        t0_total = time.perf_counter()
+        cached = cache_manager.get_rag_results(query, mode=f"rerank:{top_k}")
+        if cached is not None:
+            docs = [Document(page_content=item["page_content"], metadata=item.get("metadata", {})) for item in cached]
+            return docs, (time.perf_counter() - t0_total) * 1000.0, 0.0
+
         # 1. Fetch hybrid candidates
         candidates, ret_latency_ms = self.retrieve_hybrid(query, top_k=min(10, len(self.chunks)))
         if not candidates:
@@ -182,6 +210,11 @@ class HybridRetriever:
             if len(filtered_results) >= top_k:
                 break
 
+        cache_manager.set_rag_results(
+            query,
+            [{"page_content": d.page_content, "metadata": d.metadata} for d in filtered_results],
+            mode=f"rerank:{top_k}",
+        )
         return filtered_results, ret_latency_ms, rerank_latency_ms
 
     def invoke(self, query: str) -> List[Document]:

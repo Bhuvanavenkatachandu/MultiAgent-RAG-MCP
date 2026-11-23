@@ -4,6 +4,7 @@ from langgraph.prebuilt import create_react_agent
 from mcp_using_langchain.rag.retriever import get_retriever
 from mcp_using_langchain.tracing import CallbackHandler, observe
 from mcp_using_langchain.guardrails import mask_pii_text
+from mcp_using_langchain.llm import extract_text_content
 
 
 def build_rag_agent(llm, rebuild=False):
@@ -74,6 +75,6 @@ def build_rag_agent(llm, rebuild=False):
             config={"callbacks": [handler], "run_name": "rag-specialist-agent"}
         )
 
-        return str(result["messages"][-1].content)
+        return extract_text_content(result["messages"][-1].content)
 
     return ask_rag_agent

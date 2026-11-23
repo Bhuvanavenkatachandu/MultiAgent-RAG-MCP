@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from mcp_using_langchain.agents.database_agent import build_database_agents
 from mcp_using_langchain.agents.rag_agent import build_rag_agent
 from mcp_using_langchain.agents.supervisor import build_supervisor
+from mcp_using_langchain.llm import extract_text_content, get_configured_llm
 from mcp_using_langchain.guardrails import (
     OutputGuardrailViolation,
     StreamingGuardrailBuffer,
@@ -83,17 +84,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: Langfuse auth check: {e}")
 
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY is missing from environment")
-
-    # 1. Initialize LLM with max_tokens capped to stay within OTPM rate limits
-    max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "800"))
-    llm = ChatGroq(
-        model=os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
-        api_key=api_key,
-        max_tokens=max_tokens,
-    )
+    # 1. Initialize LLM (Groq primary with optional Gemini automatic fallback)
+    llm = get_configured_llm()
     app_state["llm"] = llm
 
     # 2. Connect PostgreSQL MCP with a persistent session across the lifespan
@@ -328,7 +320,7 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                             if isinstance(out, dict) and "messages" in out and out["messages"]:
                                 last_msg = out["messages"][-1]
                                 if hasattr(last_msg, "content") and last_msg.content:
-                                    fallback_final_content = str(last_msg.content)
+                                    fallback_final_content = extract_text_content(last_msg.content)
                         elif kind == "on_chat_model_stream":
                             # Stream tokens from the supervisor agent node speaking to the user
                             node = event.get("metadata", {}).get("langgraph_node")
@@ -336,7 +328,9 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                                 chunk = event.get("data", {}).get("chunk")
                                 if chunk and hasattr(chunk, "content") and chunk.content:
                                     if not getattr(chunk, "tool_calls", None) and not getattr(chunk, "tool_call_chunks", None):
-                                        token_str = str(chunk.content)
+                                        token_str = extract_text_content(chunk.content)
+                                        if not token_str:
+                                            continue
                                         try:
                                             ready_chunks = buffer_manager.add_token(token_str)
                                             for ready_chunk in ready_chunks:
@@ -473,7 +467,7 @@ async def chat(request: ChatRequest):
                 {"messages": messages},
                 config={"callbacks": [handler], "run_name": "supervisor-agent"}
             )
-            content = result["messages"][-1].content
+            content = extract_text_content(result["messages"][-1].content)
             sanitized_content = validate_and_sanitize_output(content)
             langfuse.update_current_span(output={"assistant_response": sanitized_content})
             flush_langfuse()

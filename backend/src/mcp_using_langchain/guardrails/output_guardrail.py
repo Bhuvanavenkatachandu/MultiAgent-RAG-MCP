@@ -297,11 +297,34 @@ def validate_and_sanitize_output(response: Any) -> str:
 
     if isinstance(response, str):
         text = response
-    elif isinstance(response, (dict, list)):
-        try:
-            text = json.dumps(response, indent=2, ensure_ascii=False)
-        except Exception:
-            text = str(response)
+    elif isinstance(response, list):
+        # Handle list of content blocks (e.g., from multimodal or Gemini chat models)
+        parts = []
+        is_content_blocks = False
+        for item in response:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and "text" in item:
+                is_content_blocks = True
+                parts.append(str(item["text"]))
+            elif hasattr(item, "text"):
+                is_content_blocks = True
+                parts.append(str(getattr(item, "text", "")))
+        if is_content_blocks or (parts and len(parts) == len(response)):
+            text = "".join(parts)
+        else:
+            try:
+                text = json.dumps(response, indent=2, ensure_ascii=False)
+            except Exception:
+                text = str(response)
+    elif isinstance(response, dict):
+        if "text" in response:
+            text = str(response["text"])
+        else:
+            try:
+                text = json.dumps(response, indent=2, ensure_ascii=False)
+            except Exception:
+                text = str(response)
     else:
         text = str(response)
 

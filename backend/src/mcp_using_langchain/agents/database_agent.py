@@ -1,8 +1,9 @@
 import re
-from typing import List
+from typing import Any, List
 from langchain_core.tools import BaseTool, tool
 from mcp_using_langchain.tracing import CallbackHandler, get_client, observe
 from mcp_using_langchain.guardrails import sanitize_tool_result, validate_sql_query_safety
+from mcp_using_langchain.llm import extract_text_content
 
 DATABASE_SCHEMA_SUMMARY = """
 PostgreSQL Tables & Schema Details:
@@ -23,12 +24,13 @@ PostgreSQL Tables & Schema Details:
 SQL_CODE_BLOCK_PATTERN = re.compile(r"```(?:sql)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
-def extract_sql_query(raw_text: str) -> str:
+def extract_sql_query(raw_text: Any) -> str:
     """Extract clean SQL string from model output."""
-    match = SQL_CODE_BLOCK_PATTERN.search(raw_text)
+    normalized = extract_text_content(raw_text)
+    match = SQL_CODE_BLOCK_PATTERN.search(normalized)
     if match:
         return match.group(1).strip()
-    return raw_text.strip().strip("`").strip()
+    return normalized.strip().strip("`").strip()
 
 
 def validate_read_only_sql(sql: str) -> bool:

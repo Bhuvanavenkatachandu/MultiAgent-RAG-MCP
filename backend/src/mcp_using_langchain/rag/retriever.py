@@ -2,6 +2,7 @@
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter
 )
+from langfuse import get_client, observe
 
 from .loader import load_documents
 from .embeddings import get_embeddings
@@ -11,7 +12,10 @@ from .vectorstore import (
 )
 
 
+@observe(name="get-or-build-retriever", as_type="span", capture_input=False, capture_output=False)
 def get_retriever(rebuild=False):
+    langfuse = get_client()
+    langfuse.update_current_span(input={"rebuild": rebuild})
 
     embeddings = get_embeddings()
 
@@ -34,6 +38,7 @@ def get_retriever(rebuild=False):
             chunks,
             embeddings
         )
+        langfuse.update_current_span(output={"status": "rebuilt", "chunks_count": len(chunks)})
 
     else:
 
@@ -41,6 +46,7 @@ def get_retriever(rebuild=False):
             vectorstore = load_vectorstore(
                 embeddings
             )
+            langfuse.update_current_span(output={"status": "loaded_existing"})
 
         except FileNotFoundError:
 
@@ -61,6 +67,7 @@ def get_retriever(rebuild=False):
                 chunks,
                 embeddings
             )
+            langfuse.update_current_span(output={"status": "built_initial", "chunks_count": len(chunks)})
 
     retriever = vectorstore.as_retriever(
         search_kwargs={
@@ -69,3 +76,4 @@ def get_retriever(rebuild=False):
     )
 
     return retriever
+

@@ -1,8 +1,14 @@
 
 import asyncio
 import os
+import uuid
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
+from langfuse import get_client, observe, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from langchain_groq import ChatGroq
 
 from mcp_using_langchain.mcp.postgres_client import (
@@ -21,8 +27,6 @@ from mcp_using_langchain.agents.supervisor import (
     build_supervisor
 )
 
-
-load_dotenv()
 
 
 async def run():
@@ -82,6 +86,14 @@ async def run():
         all_agent_tools
     )
 
+    langfuse = get_client()
+    try:
+        langfuse.auth_check()
+    except Exception as e:
+        print(f"Langfuse auth check warning: {e}")
+
+    cli_session_id = f"cli-session-{uuid.uuid4().hex[:8]}"
+
     print("\nMulti-Agent System Ready!")
     print("Ask questions or type 'exit' to quit.")
 
@@ -91,6 +103,8 @@ async def run():
         question = input("\nYou: ").strip()
 
         if question.lower() in ["exit", "quit"]:
+            print("Flushing Langfuse traces before exiting...")
+            langfuse.flush()
             print("Goodbye!")
             break
 
@@ -98,22 +112,43 @@ async def run():
             continue
 
         try:
+            with langfuse.start_as_current_observation(
+                name="cli-chat-turn",
+                as_type="agent",
+            ) as span:
+                span.update(input={"user_message": question})
+                with propagate_attributes(
+                    trace_name="cli-chat-turn",
+                    session_id=cli_session_id,
+                    tags=["cli", "postgres-rag-mcp"],
+                ):
+                    handler = CallbackHandler()
+                    response = await supervisor.ainvoke(
+                        {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": question
+                                }
+                            ]
+                        },
+                        config={"callbacks": [handler], "run_name": "supervisor-agent"}
+                    )
 
-            response = await supervisor.ainvoke({
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": question
-                    }
-                ]
-            })
+                    content = response["messages"][-1].content
+                    span.update(output={"assistant_response": content})
+                    langfuse.flush()
 
-            print("\nAssistant:")
-            print(response["messages"][-1].content)
+                    print("\nAssistant:")
+                    print(content)
 
         except Exception as error:
-
             print(f"\nError: {error}")
+            try:
+                langfuse.flush()
+            except Exception:
+                pass
+
 
 
 if __name__ == "__main__":

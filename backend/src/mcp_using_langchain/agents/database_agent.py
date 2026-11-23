@@ -2,6 +2,8 @@
 import re
 from typing import List
 from langchain_core.tools import BaseTool, tool
+from langfuse import get_client, observe
+from langfuse.langchain import CallbackHandler
 
 DATABASE_SCHEMA_SUMMARY = """
 PostgreSQL Tables & Schema Details:
@@ -54,6 +56,7 @@ def build_database_agents(llm, mcp_tools: List[BaseTool]):
     list_tables_tool = available_tools.get("list_tables")
 
     @tool
+    @observe(name="schema-agent", as_type="tool")
     async def ask_schema_agent(question: str) -> str:
         """Delegate database structure, tables, and column questions to Schema Agent."""
         q_lower = question.lower()
@@ -67,8 +70,12 @@ def build_database_agents(llm, mcp_tools: List[BaseTool]):
         return f"Database Schema Details:\n{DATABASE_SCHEMA_SUMMARY}"
 
     @tool
+    @observe(name="query-agent", as_type="agent", capture_input=False, capture_output=False)
     async def ask_query_agent(question: str) -> str:
         """Delegate data retrieval questions to Query Agent."""
+        langfuse = get_client()
+        langfuse.update_current_span(input={"question": question})
+
         prompt = f"""You are a PostgreSQL query specialist.
 Write a single read-only PostgreSQL query (SELECT or WITH) to answer the user's question.
 {DATABASE_SCHEMA_SUMMARY}
@@ -78,22 +85,48 @@ Rules:
 - Output ONLY the raw SQL query with no explanation, markdown comments, or formatting text.
 Question: {question}"""
 
-        llm_response = await llm.ainvoke(prompt)
+        handler = CallbackHandler()
+        llm_response = await llm.ainvoke(
+            prompt,
+            config={"callbacks": [handler], "run_name": "generate-sql-query"}
+        )
         raw_content = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
         sql = extract_sql_query(raw_content)
 
         if not validate_read_only_sql(sql):
-            return f"Error: Only read-only queries are permitted. Refusing: {sql}"
+            err_msg = f"Error: Only read-only queries are permitted. Refusing: {sql}"
+            langfuse.update_current_span(
+                level="WARNING",
+                status_message="Non-read-only SQL rejected",
+                output={"error": err_msg, "sql": sql}
+            )
+            return err_msg
 
         try:
-            result = await query_tool.ainvoke({"sql": sql})
-            return f"Executed SQL: {sql}\n\nQuery Result:\n{result}"
+            with langfuse.start_as_current_observation(name="execute-postgres-query", as_type="tool") as query_span:
+                query_span.update(input={"sql": sql})
+                result = await query_tool.ainvoke({"sql": sql})
+                query_span.update(output={"result": str(result)[:2000]})
+
+            output_text = f"Executed SQL: {sql}\n\nQuery Result:\n{result}"
+            langfuse.update_current_span(output={"sql": sql, "result": str(result)[:2000]})
+            return output_text
         except Exception as e:
-            return f"Database query failed for SQL '{sql}': {str(e)}"
+            err = f"Database query failed for SQL '{sql}': {str(e)}"
+            langfuse.update_current_span(
+                level="ERROR",
+                status_message=str(e),
+                output={"error": err, "sql": sql}
+            )
+            return err
 
     @tool
+    @observe(name="analytics-agent", as_type="agent", capture_input=False, capture_output=False)
     async def ask_analytics_agent(question: str) -> str:
         """Delegate analytical questions (aggregations, sums, counts, rankings, revenue, statistics) to Analytics Agent."""
+        langfuse = get_client()
+        langfuse.update_current_span(input={"question": question})
+
         prompt = f"""You are a PostgreSQL analytics specialist.
 Write an analytical PostgreSQL query using aggregations, rankings, or groupings to answer the user's question.
 {DATABASE_SCHEMA_SUMMARY}
@@ -103,18 +136,40 @@ Rules:
 - Output ONLY the raw SQL query with no explanation, markdown comments, or formatting text.
 Question: {question}"""
 
-        llm_response = await llm.ainvoke(prompt)
+        handler = CallbackHandler()
+        llm_response = await llm.ainvoke(
+            prompt,
+            config={"callbacks": [handler], "run_name": "generate-analytics-sql"}
+        )
         raw_content = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
         sql = extract_sql_query(raw_content)
 
         if not validate_read_only_sql(sql):
-            return f"Error: Only read-only queries are permitted. Refusing: {sql}"
+            err_msg = f"Error: Only read-only queries are permitted. Refusing: {sql}"
+            langfuse.update_current_span(
+                level="WARNING",
+                status_message="Non-read-only SQL rejected",
+                output={"error": err_msg, "sql": sql}
+            )
+            return err_msg
 
         try:
-            result = await query_tool.ainvoke({"sql": sql})
-            return f"Executed SQL: {sql}\n\nAnalytics Result:\n{result}"
+            with langfuse.start_as_current_observation(name="execute-postgres-analytics-query", as_type="tool") as query_span:
+                query_span.update(input={"sql": sql})
+                result = await query_tool.ainvoke({"sql": sql})
+                query_span.update(output={"result": str(result)[:2000]})
+
+            output_text = f"Executed SQL: {sql}\n\nAnalytics Result:\n{result}"
+            langfuse.update_current_span(output={"sql": sql, "result": str(result)[:2000]})
+            return output_text
         except Exception as e:
-            return f"Analytics query failed for SQL '{sql}': {str(e)}"
+            err = f"Analytics query failed for SQL '{sql}': {str(e)}"
+            langfuse.update_current_span(
+                level="ERROR",
+                status_message=str(e),
+                output={"error": err, "sql": sql}
+            )
+            return err
 
     return [
         ask_schema_agent,

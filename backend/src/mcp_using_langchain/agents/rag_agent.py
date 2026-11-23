@@ -1,3 +1,4 @@
+from pathlib import Path
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
@@ -23,17 +24,14 @@ def build_rag_agent(llm, rebuild=False):
 
         results = []
 
-        for doc in documents:
-
-            source = doc.metadata.get(
-                "source", "Unknown"
-            )
-
+        for idx, doc in enumerate(documents, start=1):
+            source = doc.metadata.get("source", "Unknown")
+            title = doc.metadata.get("title") or Path(source).stem
             sanitized_content = mask_pii_text(doc.page_content)
 
             results.append(
-                f"Source: {source}\n"
-                f"Content: {sanitized_content}"
+                f"[Document {idx}: {title} | Source: {source}]\n"
+                f"{sanitized_content}"
             )
 
         return "\n\n".join(results)
@@ -41,20 +39,15 @@ def build_rag_agent(llm, rebuild=False):
     rag_agent = create_react_agent(
         model=llm,
         tools=[search_knowledge_base],
-        prompt="""
-        You are a document knowledge specialist.
+        prompt="""You are a precise Document Knowledge Specialist.
+Your task is to search the knowledge base and answer user questions factually and concisely using ONLY the retrieved facts.
 
-        Your responsibilities:
-
-        1. Understand the user's document-related question.
-        2. Search the knowledge base.
-        3. Use retrieved information to answer.
-        4. Mention the document source when possible.
-        5. Never invent information.
-
-        If the retrieved documents do not contain
-        the answer, clearly say so.
-        """
+Strict Guidelines:
+1. Grounding: Base answers strictly on the retrieved document context. Never invent, speculate, or introduce outside assumptions.
+2. Negative Conditions: Pay strict attention to negative conditions (e.g., 'not charged', 'free', 'cannot be cancelled', 'exempt'). Never invert or alter the negative meaning.
+3. Numerical Precision: Cite exact timeframes, percentages, fees, and rules exactly as written in the text.
+4. Abstention: If the retrieved documents do not contain the answer, or if the question asks for policies not documented, explicitly state: "The provided documentation does not contain this information." Do not provide speculative answers.
+5. Multi-Chunk Synthesis: When multiple rules or steps apply, state each clearly without conflating distinct conditions."""
     )
 
     @tool

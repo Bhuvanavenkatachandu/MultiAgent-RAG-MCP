@@ -53,7 +53,6 @@ def build_database_agents(llm, mcp_tools: List[BaseTool]):
         raise RuntimeError("Required MCP tool 'query' unavailable in PostgreSQL MCP server")
 
     describe_tool = available_tools.get("describe_table")
-    list_tables_tool = available_tools.get("list_tables")
 
     @tool
     @observe(name="schema-agent", as_type="tool")
@@ -61,7 +60,8 @@ def build_database_agents(llm, mcp_tools: List[BaseTool]):
         """Delegate database structure, tables, and column questions to Schema Agent."""
         q_lower = question.lower()
         if describe_tool:
-            for tbl in ["users", "addresses", "categories", "products", "carts", "cart_items", "orders", "order_items", "payments", "shipments", "reviews"]:
+            tables = ["users", "addresses", "categories", "products", "carts", "cart_items", "orders", "order_items", "payments", "shipments", "reviews"]
+            for tbl in tables:
                 if tbl in q_lower:
                     try:
                         return str(await describe_tool.ainvoke({"tableName": tbl}))
@@ -69,15 +69,12 @@ def build_database_agents(llm, mcp_tools: List[BaseTool]):
                         pass
         return f"Database Schema Details:\n{DATABASE_SCHEMA_SUMMARY}"
 
-    @tool
-    @observe(name="query-agent", as_type="agent", capture_input=False, capture_output=False)
-    async def ask_query_agent(question: str) -> str:
-        """Delegate data retrieval questions to Query Agent."""
+    async def _run_sql_agent(question: str, role_title: str, instruction: str, span_name: str) -> str:
         langfuse = get_client()
         langfuse.update_current_span(input={"question": question})
 
-        prompt = f"""You are a PostgreSQL query specialist.
-Write a single read-only PostgreSQL query (SELECT or WITH) to answer the user's question.
+        prompt = f"""You are a PostgreSQL {role_title}.
+{instruction}
 {DATABASE_SCHEMA_SUMMARY}
 Rules:
 - Generate standard PostgreSQL SQL.
@@ -88,7 +85,7 @@ Question: {question}"""
         handler = CallbackHandler()
         llm_response = await llm.ainvoke(
             prompt,
-            config={"callbacks": [handler], "run_name": "generate-sql-query"}
+            config={"callbacks": [handler], "run_name": f"generate-{role_title.replace(' ', '-')}-sql"}
         )
         raw_content = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
         sql = extract_sql_query(raw_content)
@@ -113,7 +110,7 @@ Question: {question}"""
             return err_msg
 
         try:
-            with langfuse.start_as_current_observation(name="execute-postgres-query", as_type="tool") as query_span:
+            with langfuse.start_as_current_observation(name=span_name, as_type="tool") as query_span:
                 query_span.update(input={"sql": sql})
                 result = await query_tool.ainvoke({"sql": sql})
                 sanitized_result = sanitize_tool_result(result)
@@ -132,66 +129,26 @@ Question: {question}"""
             return err
 
     @tool
+    @observe(name="query-agent", as_type="agent", capture_input=False, capture_output=False)
+    async def ask_query_agent(question: str) -> str:
+        """Delegate data retrieval questions to Query Agent."""
+        return await _run_sql_agent(
+            question=question,
+            role_title="query specialist",
+            instruction="Write a single read-only PostgreSQL query (SELECT or WITH) to answer the user's question.",
+            span_name="execute-postgres-query",
+        )
+
+    @tool
     @observe(name="analytics-agent", as_type="agent", capture_input=False, capture_output=False)
     async def ask_analytics_agent(question: str) -> str:
         """Delegate analytical questions (aggregations, sums, counts, rankings, revenue, statistics) to Analytics Agent."""
-        langfuse = get_client()
-        langfuse.update_current_span(input={"question": question})
-
-        prompt = f"""You are a PostgreSQL analytics specialist.
-Write an analytical PostgreSQL query using aggregations, rankings, or groupings to answer the user's question.
-{DATABASE_SCHEMA_SUMMARY}
-Rules:
-- Generate standard PostgreSQL SQL.
-- Keep the SQL focused, clean, and concise using direct aggregations.
-- Output ONLY the raw SQL query with no explanation, markdown comments, or formatting text.
-Question: {question}"""
-
-        handler = CallbackHandler()
-        llm_response = await llm.ainvoke(
-            prompt,
-            config={"callbacks": [handler], "run_name": "generate-analytics-sql"}
+        return await _run_sql_agent(
+            question=question,
+            role_title="analytics specialist",
+            instruction="Write an analytical PostgreSQL query using aggregations, rankings, or groupings to answer the user's question.",
+            span_name="execute-analytics-query",
         )
-        raw_content = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
-        sql = extract_sql_query(raw_content)
-
-        if not validate_read_only_sql(sql):
-            err_msg = f"Error: Only read-only queries are permitted. Refusing: {sql}"
-            langfuse.update_current_span(
-                level="WARNING",
-                status_message="Non-read-only SQL rejected",
-                output={"error": err_msg, "sql": sql}
-            )
-            return err_msg
-
-        is_safe, sec_err = validate_sql_query_safety(sql)
-        if not is_safe:
-            err_msg = f"Security Policy Refusal: {sec_err}"
-            langfuse.update_current_span(
-                level="WARNING",
-                status_message="Sensitive column access rejected",
-                output={"error": err_msg, "sql": sql}
-            )
-            return err_msg
-
-        try:
-            with langfuse.start_as_current_observation(name="execute-analytics-query", as_type="tool") as query_span:
-                query_span.update(input={"sql": sql})
-                result = await query_tool.ainvoke({"sql": sql})
-                sanitized_result = sanitize_tool_result(result)
-                query_span.update(output={"result": str(sanitized_result)[:2000]})
-
-            output_text = f"Executed SQL: {sql}\n\nAnalytics Result:\n{sanitized_result}"
-            langfuse.update_current_span(output={"sql": sql, "result": str(sanitized_result)[:2000]})
-            return output_text
-        except Exception as e:
-            err = f"Analytics query failed for SQL '{sql}': {str(e)}"
-            langfuse.update_current_span(
-                level="ERROR",
-                status_message=str(e),
-                output={"error": err, "sql": sql}
-            )
-            return err
 
     return [
         ask_schema_agent,

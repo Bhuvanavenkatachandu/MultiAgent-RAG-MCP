@@ -23,7 +23,7 @@ import {
   TrendingUp,
   Table as TableIcon,
 } from 'lucide-react';
-import { ChartRecommendation, ChartType, ParsedTableData } from '../utils/chartDetector';
+import { ChartRecommendation, ChartType, ParsedTableData } from '../utils/reportParser';
 import { DataTable } from './DataTable';
 
 interface DynamicChartProps {

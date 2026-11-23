@@ -11,7 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { ParsedTableData } from '../utils/chartDetector';
+import { ParsedTableData } from '../utils/reportParser';
 
 interface DataTableProps {
   data: ParsedTableData;

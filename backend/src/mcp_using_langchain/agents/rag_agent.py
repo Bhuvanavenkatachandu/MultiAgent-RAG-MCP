@@ -1,9 +1,8 @@
-
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from mcp_using_langchain.tracing import CallbackHandler, get_client, observe
 
 from mcp_using_langchain.rag.retriever import get_retriever
+from mcp_using_langchain.tracing import CallbackHandler, observe
 
 
 def build_rag_agent(llm, rebuild=False):
@@ -11,39 +10,29 @@ def build_rag_agent(llm, rebuild=False):
     retriever = get_retriever(rebuild=rebuild)
 
     @tool
-    @observe(name="search-knowledge-base", as_type="retriever", capture_input=False, capture_output=False)
+    @observe(name="knowledge-base-retriever", as_type="retriever")
     def search_knowledge_base(question: str) -> str:
         """Search PDF, TXT and Markdown documents for relevant information."""
-        langfuse = get_client()
-        langfuse.update_current_span(input={"query": question})
 
         documents = retriever.invoke(question)
 
         if not documents:
-            langfuse.update_current_span(
-                output={"documents_found": 0, "result": "No relevant documents found."}
-            )
             return "No relevant documents found."
 
         results = []
-        sources = []
+
         for doc in documents:
-            source = doc.metadata.get("source", "Unknown")
-            sources.append(source)
+
+            source = doc.metadata.get(
+                "source", "Unknown"
+            )
+
             results.append(
                 f"Source: {source}\n"
                 f"Content: {doc.page_content}"
             )
 
-        output_text = "\n\n".join(results)
-        langfuse.update_current_span(
-            output={
-                "documents_found": len(documents),
-                "sources": sources,
-                "preview": output_text[:1000]
-            }
-        )
-        return output_text
+        return "\n\n".join(results)
 
     rag_agent = create_react_agent(
         model=llm,
@@ -65,11 +54,9 @@ def build_rag_agent(llm, rebuild=False):
     )
 
     @tool
-    @observe(name="rag-agent", as_type="agent", capture_input=False, capture_output=False)
+    @observe(name="rag-agent", as_type="agent")
     async def ask_rag_agent(question: str) -> str:
         """Delegate document-related questions to the RAG agent."""
-        langfuse = get_client()
-        langfuse.update_current_span(input={"question": question})
 
         handler = CallbackHandler()
         result = await rag_agent.ainvoke(
@@ -84,9 +71,6 @@ def build_rag_agent(llm, rebuild=False):
             config={"callbacks": [handler], "run_name": "rag-specialist-agent"}
         )
 
-        final_content = str(result["messages"][-1].content)
-        langfuse.update_current_span(output={"response": final_content})
-        return final_content
+        return str(result["messages"][-1].content)
 
     return ask_rag_agent
-

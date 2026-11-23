@@ -7,13 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import docx
-from mcp_using_langchain.tracing import (
-    CallbackHandler,
-    flush_langfuse,
-    get_client,
-    observe,
-    propagate_attributes,
-)
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -26,7 +20,15 @@ from mcp_using_langchain.agents.supervisor import build_supervisor
 from mcp_using_langchain.mcp.postgres_client import open_postgres_session
 from mcp_using_langchain.rag.embeddings import _configure_huggingface_auth
 from mcp_using_langchain.rag.loader import DOCUMENTS_DIR
+from mcp_using_langchain.tracing import (
+    CallbackHandler,
+    flush_langfuse,
+    get_client,
+    observe,
+    propagate_attributes,
+)
 
+load_dotenv()
 
 app_state: Dict[str, Any] = {
     "llm": None,
@@ -64,15 +66,15 @@ async def lifespan(app: FastAPI):
     # 0. Configure Hugging Face Hub authentication
     _configure_huggingface_auth()
 
-    # Verify Langfuse connectivity
-    langfuse_client = get_client()
+    # Verify Langfuse connectivity if configured
     try:
+        langfuse_client = get_client()
         if langfuse_client.auth_check():
             print("Langfuse client authenticated successfully.")
         else:
-            print("Warning: Langfuse client authentication returned False.")
+            print("Warning: Langfuse client authentication check returned False.")
     except Exception as e:
-        print(f"Warning: Langfuse auth check error: {e}")
+        print(f"Warning: Langfuse auth check: {e}")
 
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -108,12 +110,7 @@ async def lifespan(app: FastAPI):
         try:
             yield
         finally:
-            print("Shutting down FastAPI backend; flushing Langfuse events...")
-            try:
-                langfuse_client.flush()
-            except Exception as e:
-                print(f"Error flushing Langfuse on shutdown: {e}")
-
+            flush_langfuse()
 
 
 app = FastAPI(title="PostgreSQL RAG MCP API", lifespan=lifespan)
@@ -179,9 +176,7 @@ async def upload_document(file: UploadFile = File(...)):
     filename = file.filename or "uploaded_document"
     ext = Path(filename).suffix.lower()
 
-    langfuse.update_current_span(
-        input={"filename": filename, "extension": ext}
-    )
+    langfuse.update_current_span(input={"filename": filename, "extension": ext})
 
     allowed = {".pdf", ".docx", ".txt", ".md"}
     if ext not in allowed:
@@ -229,7 +224,7 @@ async def upload_document(file: UploadFile = File(...)):
         "message": f"'{filename}' uploaded and indexed successfully.",
     }
     langfuse.update_current_span(output=response_payload)
-    langfuse.flush()
+    flush_langfuse()
     return response_payload
 
 
@@ -271,7 +266,7 @@ async def chat_stream(request: ChatRequest):
                     async for event in supervisor.astream_events(
                         {"messages": messages},
                         version="v2",
-                        config={"callbacks": [handler], "run_name": "supervisor-agent"}
+                        config={"callbacks": [handler], "run_name": "supervisor-stream-agent"}
                     ):
                         kind = event.get("event")
                         if kind == "on_tool_start":
@@ -315,14 +310,14 @@ async def chat_stream(request: ChatRequest):
                     stream_span.update(output={"assistant_response": final_response})
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     yield "data: [DONE]\n\n"
-                    langfuse.flush()
+                    flush_langfuse()
                 except Exception as e:
                     stream_span.update(
                         level="ERROR",
                         status_message=str(e),
                         output={"error": str(e)}
                     )
-                    langfuse.flush()
+                    flush_langfuse()
                     yield f"data: {json.dumps({'type': 'token', 'content': f'⚠️ Error: {str(e)}'})}\n\n"
                     yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -373,7 +368,7 @@ async def chat(request: ChatRequest):
             )
             content = result["messages"][-1].content
             langfuse.update_current_span(output={"assistant_response": content})
-            langfuse.flush()
+            flush_langfuse()
             return ChatResponse(response=content, role="assistant")
     except Exception as e:
         langfuse.update_current_span(
@@ -381,9 +376,8 @@ async def chat(request: ChatRequest):
             status_message=str(e),
             output={"error": str(e)}
         )
-        langfuse.flush()
+        flush_langfuse()
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
-
 
 
 def start():

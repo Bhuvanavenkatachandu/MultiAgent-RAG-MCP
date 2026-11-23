@@ -1,4 +1,3 @@
-
 import re
 from typing import List
 from langchain_core.tools import BaseTool, tool
@@ -28,7 +27,6 @@ def extract_sql_query(raw_text: str) -> str:
     match = SQL_CODE_BLOCK_PATTERN.search(raw_text)
     if match:
         return match.group(1).strip()
-    # Strip backticks or quotes if bare
     return raw_text.strip().strip("`").strip()
 
 
@@ -153,7 +151,7 @@ Question: {question}"""
             return err_msg
 
         try:
-            with langfuse.start_as_current_observation(name="execute-postgres-analytics-query", as_type="tool") as query_span:
+            with langfuse.start_as_current_observation(name="execute-analytics-query", as_type="tool") as query_span:
                 query_span.update(input={"sql": sql})
                 result = await query_tool.ainvoke({"sql": sql})
                 query_span.update(output={"result": str(result)[:2000]})

@@ -123,6 +123,27 @@ CODE_SYNTAX_SIGNATURES = [
     re.compile(r"\bconst\s+[a-zA-Z_]\w*\s*=\s*\([^)]*\)\s*=>", re.MULTILINE),
 ]
 
+# 6. Data structures, algorithmic interview questions, and competitive programming
+DATA_STRUCTURES = (
+    r"(?:linked\s*list|binary\s*tree|binary\s*search\s*tree|bst|heap|trie|graph|"
+    r"stack|queue|doubly\s*linked\s*list|hash\s*map|palindrome)"
+)
+DSA_PATTERNS = [
+    re.compile(
+        rf"\b(?:reverse|invert|traverse|implement|sort|create|build|write|code|solve|give\s+me|get\s+me)\b"
+        rf"(?:\s+\w+){{0,3}}\s+{DATA_STRUCTURES}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b{DATA_STRUCTURES}\b(?:\s+\w+){{0,3}}\s+(?:reverse|reversal|invert|inversion|traversal|traverse|implementation|operations?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:leetcode|hackerrank|codeforces|neetcode)\b",
+        re.IGNORECASE,
+    ),
+]
+
 # Explicit safe keywords for analytical and database inquiries
 SAFE_DATA_KEYWORDS = re.compile(
     r"\b(?:sql|database|postgres|postgresql|table|tables|column|columns|schema|schemas|"
@@ -191,7 +212,16 @@ def check_code_generation(query: str) -> CodeGuardrailResult:
                 rejection_message=REJECTION_MESSAGE,
             )
 
-    # 5. Check embedded programming code snippets requesting assistance
+    # 5. Check data structures & algorithmic problem solving
+    for pat in DSA_PATTERNS:
+        if pat.search(clean_query):
+            return CodeGuardrailResult(
+                is_blocked=True,
+                reason="Prohibited data structure / algorithmic problem request.",
+                rejection_message=REJECTION_MESSAGE,
+            )
+
+    # 6. Check embedded programming code snippets requesting assistance
     if CODE_BLOCK_PATTERN.search(clean_query):
         # A markdown code block with a programming language tag
         return CodeGuardrailResult(

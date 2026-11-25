@@ -92,20 +92,18 @@ async def _initialize_services_background(llm: Any, shutdown_event: asyncio.Even
         except Exception as e:
             print(f"[startup] Warning: Langfuse auth check: {e}")
 
-        # Build RAG knowledge base agent first so supervisor is immediately functional
+        # Build RAG knowledge base agent
         rag_tool = None
         try:
             print("[startup] Initializing RAG knowledge base agent...")
             rag_tool = build_rag_agent(llm, rebuild=False)
             app_state["rag_tool"] = rag_tool
-            # Set baseline supervisor with RAG tools immediately
-            app_state["supervisor"] = build_supervisor(llm, [rag_tool])
-            print("[startup] Supervisor initialized with RAG knowledge base tools.")
+            print("[startup] RAG knowledge base agent ready.")
         except Exception as rag_err:
             logger.warning(f"[startup] Warning during RAG initialization: {rag_err}")
             print(f"[startup] Warning: RAG initialization: {rag_err}")
 
-        # Connect PostgreSQL MCP with a persistent session
+        # Connect PostgreSQL MCP with a persistent session and build the complete supervisor
         print("[startup] Connecting to PostgreSQL MCP server...")
         try:
             async with open_postgres_session() as (client, mcp_tools):
@@ -117,19 +115,19 @@ async def _initialize_services_background(llm: Any, shutdown_event: asyncio.Even
                 database_tools = build_database_agents(llm, mcp_tools)
                 app_state["database_tools"] = database_tools
 
-                # Build full supervisor with database and RAG tools
+                # Assemble complete multi-agent supervisor with all 4 specialist agents
                 all_agent_tools = database_tools + ([rag_tool] if rag_tool else [])
-                app_state["supervisor"] = build_supervisor(llm, all_agent_tools)
-                print("[startup] FastAPI Backend fully ready with Database MCP and RAG agents!")
+                supervisor = build_supervisor(llm, all_agent_tools)
+                app_state["supervisor"] = supervisor
+                print("[startup] FastAPI Backend fully ready: Multi-Agent Supervisor online with Database (Query, Analytics, Schema) & RAG agents!")
 
                 # Keep persistent MCP session active until application shutdown
                 await shutdown_event.wait()
         except asyncio.CancelledError:
             raise
         except Exception as mcp_err:
-            logger.error(f"[startup] Warning: PostgreSQL MCP connection failed: {mcp_err}", exc_info=True)
-            print(f"[startup] Warning: PostgreSQL MCP connection failed ({mcp_err}). Running with available agents.")
-            # Keep application running even if PostgreSQL MCP is offline or slow
+            logger.error(f"[startup] Critical: PostgreSQL MCP connection failed: {mcp_err}", exc_info=True)
+            print(f"[startup] Critical: PostgreSQL MCP connection failed ({mcp_err}).")
             await shutdown_event.wait()
 
     except asyncio.CancelledError:

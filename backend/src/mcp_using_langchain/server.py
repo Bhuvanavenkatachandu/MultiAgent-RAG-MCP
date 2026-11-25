@@ -119,6 +119,7 @@ async def _initialize_services_background(llm: Any, shutdown_event: asyncio.Even
                 all_agent_tools = database_tools + ([rag_tool] if rag_tool else [])
                 supervisor = build_supervisor(llm, all_agent_tools)
                 app_state["supervisor"] = supervisor
+                app_state["startup_error"] = None
                 print("[startup] FastAPI Backend fully ready: Multi-Agent Supervisor online with Database (Query, Analytics, Schema) & RAG agents!")
 
                 # Keep persistent MCP session active until application shutdown
@@ -126,8 +127,9 @@ async def _initialize_services_background(llm: Any, shutdown_event: asyncio.Even
         except asyncio.CancelledError:
             raise
         except Exception as mcp_err:
+            app_state["startup_error"] = f"PostgreSQL MCP initialization failed: {type(mcp_err).__name__}: {mcp_err}"
             logger.error(f"[startup] Critical: PostgreSQL MCP connection failed: {mcp_err}", exc_info=True)
-            print(f"[startup] Critical: PostgreSQL MCP connection failed ({mcp_err}).")
+            print(f"[startup] Critical: PostgreSQL MCP connection failed ({type(mcp_err).__name__}: {mcp_err}).")
             await shutdown_event.wait()
 
     except asyncio.CancelledError:
@@ -219,9 +221,10 @@ async def cancel_chat(request: CancelChatRequest):
 @app.get("/api/health")
 async def health_check():
     return {
-        "status": "healthy",
-        "mcp_connected": app_state["mcp_tools"] is not None,
-        "supervisor_ready": app_state["supervisor"] is not None,
+        "status": "healthy" if app_state.get("supervisor") else "initializing",
+        "mcp_connected": app_state.get("mcp_tools") is not None,
+        "supervisor_ready": app_state.get("supervisor") is not None,
+        "error": app_state.get("startup_error"),
     }
 
 
@@ -331,9 +334,11 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
             },
         )
 
-    supervisor = app_state["supervisor"]
+    supervisor = app_state.get("supervisor")
     if not supervisor:
-        raise HTTPException(status_code=503, detail="Supervisor not initialized")
+        err = app_state.get("startup_error")
+        detail = f"Supervisor not initialized: {err}" if err else "Supervisor is warming up. Please retry in a few seconds."
+        raise HTTPException(status_code=503, detail=detail)
 
     tags = ["chat-stream", "postgres-rag-mcp"] + (request.tags or [])
 
@@ -564,9 +569,11 @@ async def chat(request: ChatRequest):
             flush_langfuse()
             return ChatResponse(response=rejection_msg or "Request rejected by system guardrails.", role="assistant", chat_id=chat_id)
 
-        supervisor = app_state["supervisor"]
+        supervisor = app_state.get("supervisor")
         if not supervisor:
-            raise HTTPException(status_code=503, detail="Supervisor not initialized")
+            err = app_state.get("startup_error")
+            detail = f"Supervisor not initialized: {err}" if err else "Supervisor is warming up. Please retry in a few seconds."
+            raise HTTPException(status_code=503, detail=detail)
 
         tags = ["chat-json", "postgres-rag-mcp"] + (request.tags or [])
 

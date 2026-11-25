@@ -18,6 +18,9 @@ def create_mcp_client() -> MultiServerMCPClient:
     if not database_url:
         raise ValueError("DATABASE_URL is missing from .env")
 
+    import shutil
+    npx_cmd = shutil.which("npx") or "npx"
+
     # Filter out Render-specific internal bash variables that corrupt node subprocesses
     clean_env = {
         k: v
@@ -27,10 +30,17 @@ def create_mcp_client() -> MultiServerMCPClient:
     clean_env["DATABASE_URL"] = database_url
     clean_env["PG_ALLOW_WRITE"] = os.getenv("PG_ALLOW_WRITE", "false")
 
+    # Ensure PATH contains node/npx binary directories
+    current_path = os.getenv("PATH", "")
+    node_local_path = os.path.expanduser("~/.local/node-v20.18.0-linux-x64/bin")
+    if os.path.exists(node_local_path) and node_local_path not in current_path:
+        current_path = f"{node_local_path}:{current_path}"
+    clean_env["PATH"] = current_path
+
     client = MultiServerMCPClient(
         {
             "postgres": {
-                "command": "npx",
+                "command": npx_cmd,
                 "args": [
                     "-y",
                     "mcp-postgres-server"

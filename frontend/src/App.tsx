@@ -16,6 +16,7 @@ import {
   fetchDocuments,
   sendChatMessage,
   sendChatMessageStream,
+  cancelChat,
   DocumentItem,
   ChatMessageItem,
 } from './services/api';
@@ -54,6 +55,23 @@ export function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
+
+  const [sessionId] = useState<string>(() => {
+    try {
+      const existing = sessionStorage.getItem('postgres_rag_session_id');
+      if (existing) return existing;
+      const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      sessionStorage.setItem('postgres_rag_session_id', newId);
+      return newId;
+    } catch {
+      return `session_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    }
+  });
+
+  const [chatId, setChatId] = useState<string>(() => `chat_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`);
+  const activeChatIdRef = useRef<string>(chatId);
+  activeChatIdRef.current = chatId;
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -94,6 +112,14 @@ export function App() {
   }, [messages, isChatLoading]);
 
   const handleSendMessage = async (text: string) => {
+    // Abort any prior in-flight chat stream before beginning new request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    const currentChatId = activeChatIdRef.current;
     const userMsgId = String(Date.now());
     const userMessage: Message = {
       id: userMsgId,
@@ -120,6 +146,9 @@ export function App() {
         text,
         historyItems,
         (token) => {
+          if (activeChatIdRef.current !== currentChatId || abortController.signal.aborted) {
+            return;
+          }
           accumulatedContent += token;
           if (!assistantMessageCreated) {
             assistantMessageCreated = true;
@@ -143,21 +172,32 @@ export function App() {
           }
         },
         (status) => {
+          if (activeChatIdRef.current !== currentChatId || abortController.signal.aborted) {
+            return;
+          }
           setStreamStatus(status);
-        }
+        },
+        sessionId,
+        currentChatId,
+        abortController.signal
       );
 
-      if (!assistantMessageCreated) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: assistantMsgId,
-            role: 'assistant',
-            content: accumulatedContent || 'Unable to generate analysis. Please try rephrasing your query.',
-          },
-        ]);
+      if (activeChatIdRef.current === currentChatId && !abortController.signal.aborted) {
+        if (!assistantMessageCreated) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: assistantMsgId,
+              role: 'assistant',
+              content: accumulatedContent || 'Unable to generate analysis. Please try rephrasing your query.',
+            },
+          ]);
+        }
       }
     } catch (err: any) {
+      if (err.name === 'AbortError' || abortController.signal.aborted || activeChatIdRef.current !== currentChatId) {
+        return;
+      }
       const errorMsg: Message = {
         id: String(Date.now() + 2),
         role: 'assistant',
@@ -166,13 +206,34 @@ export function App() {
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
-      setIsChatLoading(false);
-      setStreamStatus('');
+      if (activeChatIdRef.current === currentChatId) {
+        setIsChatLoading(false);
+        setStreamStatus('');
+      }
     }
   };
 
   const handleNewChat = () => {
+    // 1. Instantly abort running browser stream
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // 2. Invalidate previous generation and assign a new active chat identity
+    const newChatId = `chat_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    activeChatIdRef.current = newChatId;
+    setChatId(newChatId);
+
+    // 3. Clear chat messages and status immediately for a clean state
     setMessages([]);
+    setIsChatLoading(false);
+    setStreamStatus('');
+
+    // 4. Cancel previous active server task for this session scope
+    cancelChat(sessionId, newChatId).catch((err) => {
+      console.warn('Backend cancel warning:', err);
+    });
   };
 
   const handleUploadSuccess = () => {

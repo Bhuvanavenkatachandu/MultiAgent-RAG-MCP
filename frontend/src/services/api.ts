@@ -47,18 +47,52 @@ export async function uploadDocument(file: File): Promise<{ filename: string; st
   return res.json();
 }
 
+export async function cancelChat(
+  sessionId?: string,
+  newChatId?: string
+): Promise<{ status: string; session_id: string; cancelled_chat_id: string | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/chat/cancel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        chat_id: newChatId,
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn('Failed to notify backend of chat cancellation');
+      return { status: 'failed', session_id: sessionId || '', cancelled_chat_id: null };
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.warn('Error sending cancelChat request:', err);
+    return { status: 'failed', session_id: sessionId || '', cancelled_chat_id: null };
+  }
+}
+
 export async function sendChatMessage(
   message: string,
-  history: ChatMessageItem[] = []
+  history: ChatMessageItem[] = [],
+  sessionId?: string,
+  chatId?: string,
+  signal?: AbortSignal
 ): Promise<string> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
+    signal,
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       message,
       history: history.slice(-8), // Send recent context for follow-ups
+      session_id: sessionId,
+      chat_id: chatId,
     }),
   });
 
@@ -75,16 +109,22 @@ export async function sendChatMessageStream(
   message: string,
   history: ChatMessageItem[] = [],
   onToken: (token: string) => void,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  sessionId?: string,
+  chatId?: string,
+  signal?: AbortSignal
 ): Promise<string> {
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
+    signal,
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       message,
       history: history.slice(-8),
+      session_id: sessionId,
+      chat_id: chatId,
     }),
   });
 
@@ -100,36 +140,57 @@ export async function sendChatMessageStream(
   let buffer = '';
   let fullText = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        try {
+          await reader.cancel();
+        } catch {}
+        break;
+      }
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data:')) continue;
-      const dataStr = trimmed.replace(/^data:\s*/, '').trim();
-      if (dataStr === '[DONE]') continue;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-      try {
-        const payload = JSON.parse(dataStr);
-        if (payload.type === 'token' && payload.content) {
-          fullText += payload.content;
-          onToken(payload.content);
-        } else if (payload.type === 'status' && payload.message && onStatus) {
-          onStatus(payload.message);
-        } else if (payload.type === 'error' && payload.message) {
-          throw new Error(payload.message);
-        }
-      } catch (e: any) {
-        if (dataStr.includes('"type":"error"') || dataStr.includes('"type": "error"')) {
-          throw e;
+      for (const line of lines) {
+        if (signal?.aborted) break;
+
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const dataStr = trimmed.replace(/^data:\s*/, '').trim();
+        if (dataStr === '[DONE]') continue;
+
+        try {
+          const payload = JSON.parse(dataStr);
+
+          // Stale event prevention: reject tokens or events from old/invalidated chats
+          if (chatId && payload.chat_id && payload.chat_id !== chatId) {
+            continue;
+          }
+
+          if (payload.type === 'token' && payload.content) {
+            fullText += payload.content;
+            onToken(payload.content);
+          } else if (payload.type === 'status' && payload.message && onStatus) {
+            onStatus(payload.message);
+          } else if (payload.type === 'error' && payload.message) {
+            throw new Error(payload.message);
+          }
+        } catch (e: any) {
+          if (dataStr.includes('"type":"error"') || dataStr.includes('"type": "error"')) {
+            throw e;
+          }
         }
       }
     }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
   }
 
   return fullText;

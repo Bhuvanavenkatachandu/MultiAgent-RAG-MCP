@@ -48,7 +48,7 @@ MultiAgent-RAG-MCP/
   ```
 - **Start Command**:
   ```bash
-  uvicorn mcp_using_langchain.server:app --host 0.0.0.0 --port $PORT
+  PYTHONPATH=src uvicorn mcp_using_langchain.server:app --host 0.0.0.0 --port $PORT
   ```
 - **Environment Variables**:
   - `GROQ_API_KEY`: Your Groq API key

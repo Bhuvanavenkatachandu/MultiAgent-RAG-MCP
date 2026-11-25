@@ -76,47 +76,75 @@ async def rebuild_supervisor():
         await asyncio.to_thread(_rebuild_supervisor_sync)
 
 
+async def _initialize_services_background(llm: Any, shutdown_event: asyncio.Event):
+    """Initializes heavy external services (MCP, agents, vectorstore) in the background so the HTTP port binds immediately."""
+    try:
+        # 0. Configure Hugging Face Hub authentication
+        _configure_huggingface_auth()
+
+        # Verify Langfuse connectivity if configured
+        try:
+            langfuse_client = get_client()
+            if langfuse_client.auth_check():
+                print("[startup] Langfuse client authenticated successfully.")
+            else:
+                print("[startup] Warning: Langfuse client authentication check returned False.")
+        except Exception as e:
+            print(f"[startup] Warning: Langfuse auth check: {e}")
+
+        # Connect PostgreSQL MCP with a persistent session
+        print("[startup] Connecting to PostgreSQL MCP server...")
+        async with open_postgres_session() as (client, mcp_tools):
+            app_state["mcp_client"] = client
+            app_state["mcp_tools"] = mcp_tools
+
+            # Build specialist agents
+            print("[startup] Building database and RAG agents...")
+            database_tools = build_database_agents(llm, mcp_tools)
+            app_state["database_tools"] = database_tools
+
+            rag_tool = build_rag_agent(llm, rebuild=False)
+            app_state["rag_tool"] = rag_tool
+
+            # Build supervisor
+            print("[startup] Building supervisor orchestrator...")
+            all_agent_tools = database_tools + [rag_tool]
+            supervisor = build_supervisor(llm, all_agent_tools)
+            app_state["supervisor"] = supervisor
+
+            print("[startup] FastAPI Backend fully ready to accept user chats!")
+            # Keep persistent MCP session active until application shutdown
+            await shutdown_event.wait()
+    except asyncio.CancelledError:
+        print("[shutdown] Background services initialization cancelled.")
+    except Exception as e:
+        logger.error(f"[startup] Critical error during background services initialization: {e}", exc_info=True)
+        print(f"[startup] ERROR: Background services initialization failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 0. Configure Hugging Face Hub authentication
-    _configure_huggingface_auth()
-
-    # Verify Langfuse connectivity if configured
-    try:
-        langfuse_client = get_client()
-        if langfuse_client.auth_check():
-            print("Langfuse client authenticated successfully.")
-        else:
-            print("Warning: Langfuse client authentication check returned False.")
-    except Exception as e:
-        print(f"Warning: Langfuse auth check: {e}")
+    print("[startup] Lifespan: Server startup initiated...")
 
     # 1. Initialize LLM (Groq primary with optional Gemini automatic fallback)
     llm = get_configured_llm()
     app_state["llm"] = llm
 
-    # 2. Connect PostgreSQL MCP with a persistent session across the lifespan
-    async with open_postgres_session() as (client, mcp_tools):
-        app_state["mcp_client"] = client
-        app_state["mcp_tools"] = mcp_tools
+    # 2. Launch background initialization so Uvicorn opens the port IMMEDIATELY (<1s)
+    shutdown_event = asyncio.Event()
+    init_task = asyncio.create_task(_initialize_services_background(llm, shutdown_event))
+    print("[startup] HTTP port will now open immediately. Background services initializing concurrently.")
 
-        # 3. Build specialist agents
-        database_tools = build_database_agents(llm, mcp_tools)
-        app_state["database_tools"] = database_tools
-
-        rag_tool = build_rag_agent(llm, rebuild=False)
-        app_state["rag_tool"] = rag_tool
-
-        # 4. Build supervisor
-        all_agent_tools = database_tools + [rag_tool]
-        supervisor = build_supervisor(llm, all_agent_tools)
-        app_state["supervisor"] = supervisor
-
-        print("FastAPI Backend initialized with Supervisor & PostgreSQL MCP (persistent session)")
+    try:
+        yield
+    finally:
+        shutdown_event.set()
+        init_task.cancel()
         try:
-            yield
-        finally:
-            flush_langfuse()
+            await asyncio.wait_for(init_task, timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        flush_langfuse()
 
 
 app = FastAPI(title="PostgreSQL RAG MCP API", lifespan=lifespan)

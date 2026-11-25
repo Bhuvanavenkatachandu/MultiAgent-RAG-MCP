@@ -1,0 +1,3 @@
+# Root requirements for deployments where root directory is repository root
+-r backend/requirements.txt
+-e backend

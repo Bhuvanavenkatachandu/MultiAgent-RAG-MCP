@@ -56,9 +56,8 @@ rebuild_lock = asyncio.Lock()
 
 def _rebuild_supervisor_sync():
     """Synchronous core for rebuilding vector index and supervisor."""
-    llm = app_state["llm"]
-    database_tools = app_state["database_tools"]
-    if not llm or not database_tools:
+    llm = app_state.get("llm")
+    if not llm:
         return
 
     # Invalidate stale RAG search cache when documents are modified or re-indexed
@@ -66,6 +65,7 @@ def _rebuild_supervisor_sync():
 
     rag_tool = build_rag_agent(llm, rebuild=True)
     app_state["rag_tool"] = rag_tool
+    database_tools = app_state.get("database_tools") or []
     all_agent_tools = database_tools + [rag_tool]
     app_state["supervisor"] = build_supervisor(llm, all_agent_tools)
 
@@ -92,29 +92,46 @@ async def _initialize_services_background(llm: Any, shutdown_event: asyncio.Even
         except Exception as e:
             print(f"[startup] Warning: Langfuse auth check: {e}")
 
-        # Connect PostgreSQL MCP with a persistent session
-        print("[startup] Connecting to PostgreSQL MCP server...")
-        async with open_postgres_session() as (client, mcp_tools):
-            app_state["mcp_client"] = client
-            app_state["mcp_tools"] = mcp_tools
-
-            # Build specialist agents
-            print("[startup] Building database and RAG agents...")
-            database_tools = build_database_agents(llm, mcp_tools)
-            app_state["database_tools"] = database_tools
-
+        # Build RAG knowledge base agent first so supervisor is immediately functional
+        rag_tool = None
+        try:
+            print("[startup] Initializing RAG knowledge base agent...")
             rag_tool = build_rag_agent(llm, rebuild=False)
             app_state["rag_tool"] = rag_tool
+            # Set baseline supervisor with RAG tools immediately
+            app_state["supervisor"] = build_supervisor(llm, [rag_tool])
+            print("[startup] Supervisor initialized with RAG knowledge base tools.")
+        except Exception as rag_err:
+            logger.warning(f"[startup] Warning during RAG initialization: {rag_err}")
+            print(f"[startup] Warning: RAG initialization: {rag_err}")
 
-            # Build supervisor
-            print("[startup] Building supervisor orchestrator...")
-            all_agent_tools = database_tools + [rag_tool]
-            supervisor = build_supervisor(llm, all_agent_tools)
-            app_state["supervisor"] = supervisor
+        # Connect PostgreSQL MCP with a persistent session
+        print("[startup] Connecting to PostgreSQL MCP server...")
+        try:
+            async with open_postgres_session() as (client, mcp_tools):
+                app_state["mcp_client"] = client
+                app_state["mcp_tools"] = mcp_tools
 
-            print("[startup] FastAPI Backend fully ready to accept user chats!")
-            # Keep persistent MCP session active until application shutdown
+                # Build specialist agents
+                print("[startup] Building database specialist tools...")
+                database_tools = build_database_agents(llm, mcp_tools)
+                app_state["database_tools"] = database_tools
+
+                # Build full supervisor with database and RAG tools
+                all_agent_tools = database_tools + ([rag_tool] if rag_tool else [])
+                app_state["supervisor"] = build_supervisor(llm, all_agent_tools)
+                print("[startup] FastAPI Backend fully ready with Database MCP and RAG agents!")
+
+                # Keep persistent MCP session active until application shutdown
+                await shutdown_event.wait()
+        except asyncio.CancelledError:
+            raise
+        except Exception as mcp_err:
+            logger.error(f"[startup] Warning: PostgreSQL MCP connection failed: {mcp_err}", exc_info=True)
+            print(f"[startup] Warning: PostgreSQL MCP connection failed ({mcp_err}). Running with available agents.")
+            # Keep application running even if PostgreSQL MCP is offline or slow
             await shutdown_event.wait()
+
     except asyncio.CancelledError:
         print("[shutdown] Background services initialization cancelled.")
     except Exception as e:

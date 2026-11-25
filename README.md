@@ -341,7 +341,7 @@ Then restart the backend with `REBUILD_VECTORSTORE=true` in your `.env`.
 
 - **Root Directory**: `backend`
 - **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `uvicorn mcp_using_langchain.server:app --host 0.0.0.0 --port $PORT`
+- **Start Command**: `PYTHONPATH=src uvicorn mcp_using_langchain.server:app --host 0.0.0.0 --port $PORT`
 - **Environment Variables**: `GROQ_API_KEY`, `GROQ_MODEL`, `DATABASE_URL`, `PG_ALLOW_WRITE`
 
 ### Deploy Frontend (Vercel, Netlify, Cloudflare Pages)
@@ -358,6 +358,7 @@ Then restart the backend with `REBUILD_VECTORSTORE=true` in your `.env`.
 
 | Error | Cause | Fix |
 |---|---|---|
+| `ModuleNotFoundError: No module named 'mcp_using_langchain'` | `src` folder not in `PYTHONPATH` during deployment | Add `PYTHONPATH=src` to the start command: `PYTHONPATH=src uvicorn mcp_using_langchain.server:app --host 0.0.0.0 --port $PORT` or run `pip install -e .` |
 | `GROQ_API_KEY is missing from environment` | `.env` not found or empty | Create `backend/.env` with your Groq key |
 | `DATABASE_URL is missing from .env` | PostgreSQL URL not set | Add `DATABASE_URL=postgresql://...` to `backend/.env` |
 | `No documents found inside rag/documents/` | No files in the RAG folder | Add at least one `.txt`, `.pdf`, or `.md` file to `backend/src/mcp_using_langchain/rag/documents/` |

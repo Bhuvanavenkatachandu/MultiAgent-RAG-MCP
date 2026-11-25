@@ -1,7 +1,9 @@
 import asyncio
 import json
+import logging
 import os
 import shutil
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -18,6 +20,7 @@ from mcp_using_langchain.agents.database_agent import build_database_agents
 from mcp_using_langchain.agents.rag_agent import build_rag_agent
 from mcp_using_langchain.agents.supervisor import build_supervisor
 from mcp_using_langchain.llm import extract_text_content, get_configured_llm
+from mcp_using_langchain.task_manager import chat_task_manager
 from mcp_using_langchain.guardrails import (
     OutputGuardrailViolation,
     StreamingGuardrailBuffer,
@@ -127,6 +130,9 @@ app.add_middleware(
 )
 
 
+logger = logging.getLogger("mcp_using_langchain.server")
+
+
 class MessageItem(BaseModel):
     role: str
     content: str
@@ -137,12 +143,34 @@ class ChatRequest(BaseModel):
     history: Optional[List[MessageItem]] = []
     session_id: Optional[str] = None
     user_id: Optional[str] = None
+    chat_id: Optional[str] = None
     tags: Optional[List[str]] = None
+
+
+class CancelChatRequest(BaseModel):
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    chat_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
     response: str
     role: str = "assistant"
+    chat_id: Optional[str] = None
+
+
+@app.post("/api/chat/cancel")
+async def cancel_chat(request: CancelChatRequest):
+    """Cancels any currently running chat generation task for the session scope."""
+    session_id = request.session_id or "web-session-default"
+    user_id = request.user_id or "web-user"
+    session_key = chat_task_manager.get_session_key(session_id, user_id)
+    cancelled_id = await chat_task_manager.cancel_active_task(session_key, new_chat_id=request.chat_id)
+    return {
+        "status": "cancelled",
+        "session_id": session_id,
+        "cancelled_chat_id": cancelled_id,
+    }
 
 
 @app.get("/api/health")
@@ -233,13 +261,21 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest, raw_request: Request):
+    chat_id = request.chat_id or f"chat_{uuid.uuid4().hex[:10]}"
+    session_id = request.session_id or "web-session-default"
+    user_id = request.user_id or "web-user"
+    session_key = chat_task_manager.get_session_key(session_id, user_id)
+
+    # Cancel any previous active task for this user/session before starting the new stream
+    await chat_task_manager.cancel_active_task(session_key, new_chat_id=chat_id)
+
     # Execute layered input guardrails before invoking supervisor
     passed, rejection_msg, cleaned_query = run_input_guardrails(request.message)
     if not passed:
         async def rejection_generator():
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Evaluating request...'})}\n\n"
-            yield f"data: {json.dumps({'type': 'token', 'content': rejection_msg or 'Request rejected by system guardrails.'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Evaluating request...', 'chat_id': chat_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'content': rejection_msg or 'Request rejected by system guardrails.', 'chat_id': chat_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'chat_id': chat_id})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -256,8 +292,6 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
     if not supervisor:
         raise HTTPException(status_code=503, detail="Supervisor not initialized")
 
-    session_id = request.session_id or "web-session-default"
-    user_id = request.user_id or "web-user"
     tags = ["chat-stream", "postgres-rag-mcp"] + (request.tags or [])
 
     messages = []
@@ -267,6 +301,11 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
     messages.append({"role": "user", "content": cleaned_query})
 
     async def event_generator():
+        current_task = asyncio.current_task()
+        cancel_event = asyncio.Event()
+        if current_task:
+            await chat_task_manager.register_task(session_key, chat_id, current_task, cancel_event)
+
         langfuse = get_client()
         with langfuse.start_as_current_observation(
             name="chat-stream-turn",
@@ -292,13 +331,20 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                 client_disconnected = False
 
                 try:
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Processing question...'})}\n\n"
+                    if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                        return
+
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Processing question...', 'chat_id': chat_id})}\n\n"
                     async for event in supervisor.astream_events(
                         {"messages": messages},
                         version="v2",
                         config={"callbacks": [handler], "run_name": "supervisor-stream-agent"}
                     ):
-                        # Detect client disconnection to avoid running generation indefinitely
+                        # Detect cancellation or client disconnection
+                        if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                            client_disconnected = True
+                            break
+
                         if await raw_request.is_disconnected():
                             client_disconnected = True
                             break
@@ -316,9 +362,9 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                                 status_text = "Inspecting database schema..."
                             else:
                                 status_text = "Executing specialist tool..."
-                            yield f"data: {json.dumps({'type': 'status', 'message': status_text})}\n\n"
+                            yield f"data: {json.dumps({'type': 'status', 'message': status_text, 'chat_id': chat_id})}\n\n"
                         elif kind == "on_tool_end":
-                            yield f"data: {json.dumps({'type': 'status', 'message': 'Synthesizing response...'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'status', 'message': 'Synthesizing response...', 'chat_id': chat_id})}\n\n"
                         elif kind == "on_chain_end":
                             out = event.get("data", {}).get("output")
                             if isinstance(out, dict) and "messages" in out and out["messages"]:
@@ -338,9 +384,12 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                                         try:
                                             ready_chunks = buffer_manager.add_token(token_str)
                                             for ready_chunk in ready_chunks:
+                                                if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                                                    client_disconnected = True
+                                                    break
                                                 tokens_streamed_count += 1
                                                 accumulated_tokens.append(ready_chunk)
-                                                yield f"data: {json.dumps({'type': 'token', 'content': ready_chunk})}\n\n"
+                                                yield f"data: {json.dumps({'type': 'token', 'content': ready_chunk, 'chat_id': chat_id})}\n\n"
                                         except OutputGuardrailViolation as violation:
                                             violation_detected = True
                                             buffer_manager.clear()
@@ -349,12 +398,16 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                                                 status_message=f"Output Guardrail Violation: {violation.reason}",
                                                 output={"guardrail_violation": violation.reason}
                                             )
-                                            yield f"data: {json.dumps({'type': 'error', 'message': violation.message})}\n\n"
-                                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                                            yield f"data: {json.dumps({'type': 'error', 'message': violation.message, 'chat_id': chat_id})}\n\n"
+                                            yield f"data: {json.dumps({'type': 'done', 'chat_id': chat_id})}\n\n"
                                             yield "data: [DONE]\n\n"
                                             break
 
-                    # If client disconnected or guardrail violation occurred, terminate without flushing unvalidated text
+                    # If task was cancelled, client disconnected or guardrail violation occurred
+                    if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                        flush_langfuse()
+                        return
+
                     if client_disconnected or violation_detected:
                         flush_langfuse()
                         return
@@ -363,9 +416,11 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                     try:
                         remaining_chunks = buffer_manager.flush()
                         for remaining_chunk in remaining_chunks:
+                            if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                                return
                             tokens_streamed_count += 1
                             accumulated_tokens.append(remaining_chunk)
-                            yield f"data: {json.dumps({'type': 'token', 'content': remaining_chunk})}\n\n"
+                            yield f"data: {json.dumps({'type': 'token', 'content': remaining_chunk, 'chat_id': chat_id})}\n\n"
                     except OutputGuardrailViolation as violation:
                         violation_detected = True
                         buffer_manager.clear()
@@ -374,14 +429,16 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                             status_message=f"Output Guardrail Violation on flush: {violation.reason}",
                             output={"guardrail_violation": violation.reason}
                         )
-                        yield f"data: {json.dumps({'type': 'error', 'message': violation.message})}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'error', 'message': violation.message, 'chat_id': chat_id})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done', 'chat_id': chat_id})}\n\n"
                         yield "data: [DONE]\n\n"
                         flush_langfuse()
                         return
 
                     # Guaranteed delivery: if token streaming was bypassed/empty, validate and deliver fallback content
                     if tokens_streamed_count == 0 and fallback_final_content:
+                        if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                            return
                         validation = check_output_safety(fallback_final_content)
                         if not validation.is_safe:
                             stream_span.update(
@@ -389,36 +446,44 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
                                 status_message=f"Output Guardrail Violation on fallback: {validation.reason}",
                                 output={"guardrail_violation": validation.reason}
                             )
-                            yield f"data: {json.dumps({'type': 'error', 'message': validation.rejection_message or 'Output blocked by system guardrails.'})}\n\n"
-                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'error', 'message': validation.rejection_message or 'Output blocked by system guardrails.', 'chat_id': chat_id})}\n\n"
+                            yield f"data: {json.dumps({'type': 'done', 'chat_id': chat_id})}\n\n"
                             yield "data: [DONE]\n\n"
                             flush_langfuse()
                             return
 
                         safe_fallback = validation.sanitized_text if validation.sanitized_text else fallback_final_content
                         accumulated_tokens.append(safe_fallback)
-                        yield f"data: {json.dumps({'type': 'token', 'content': safe_fallback})}\n\n"
+                        yield f"data: {json.dumps({'type': 'token', 'content': safe_fallback, 'chat_id': chat_id})}\n\n"
 
                     final_response = "".join(accumulated_tokens)
                     stream_span.update(output={"assistant_response": final_response})
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'chat_id': chat_id})}\n\n"
                     yield "data: [DONE]\n\n"
                     flush_langfuse()
                 except asyncio.CancelledError:
-                    # Client aborted the request during generation
+                    # Task was cancelled (e.g. client aborted or New Chat started)
+                    logger.info("Chat stream generation cancelled for session %s (chat_id: %s)", session_key, chat_id)
                     flush_langfuse()
                     return
                 except Exception as e:
+                    if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                        flush_langfuse()
+                        return
                     stream_span.update(
                         level="ERROR",
                         status_message=str(e),
                         output={"error": str(e)}
                     )
                     flush_langfuse()
-                    yield f"data: {json.dumps({'type': 'token', 'content': f'⚠️ Error: {str(e)}'})}\n\n"
-                    yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    # Do not append error as token if tokens were already emitted to avoid mangling output
+                    if tokens_streamed_count == 0:
+                        yield f"data: {json.dumps({'type': 'token', 'content': f'⚠️ Error: {str(e)}', 'chat_id': chat_id})}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'chat_id': chat_id})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'chat_id': chat_id})}\n\n"
                     yield "data: [DONE]\n\n"
+                finally:
+                    await chat_task_manager.unregister_task(session_key, chat_id)
 
     return StreamingResponse(
         event_generator(),
@@ -434,32 +499,46 @@ async def chat_stream(request: ChatRequest, raw_request: Request):
 @app.post("/api/chat", response_model=ChatResponse)
 @observe(name="chat-turn", as_type="agent", capture_input=False, capture_output=False)
 async def chat(request: ChatRequest):
-    # Execute layered input guardrails before invoking supervisor
-    passed, rejection_msg, cleaned_query = run_input_guardrails(request.message)
-    if not passed:
-        langfuse = get_client()
-        langfuse.update_current_span(output={"guardrail_rejection": rejection_msg})
-        flush_langfuse()
-        return ChatResponse(response=rejection_msg or "Request rejected by system guardrails.", role="assistant")
-
-    supervisor = app_state["supervisor"]
-    if not supervisor:
-        raise HTTPException(status_code=503, detail="Supervisor not initialized")
-
+    chat_id = request.chat_id or f"chat_{uuid.uuid4().hex[:10]}"
     session_id = request.session_id or "web-session-default"
     user_id = request.user_id or "web-user"
-    tags = ["chat-json", "postgres-rag-mcp"] + (request.tags or [])
+    session_key = chat_task_manager.get_session_key(session_id, user_id)
 
-    langfuse = get_client()
-    langfuse.update_current_span(input={"user_message": cleaned_query})
+    # Cancel previous task for this session
+    await chat_task_manager.cancel_active_task(session_key, new_chat_id=chat_id)
 
-    messages = []
-    if request.history:
-        for item in request.history:
-            messages.append({"role": item.role, "content": item.content})
-    messages.append({"role": "user", "content": cleaned_query})
+    current_task = asyncio.current_task()
+    cancel_event = asyncio.Event()
+    if current_task:
+        await chat_task_manager.register_task(session_key, chat_id, current_task, cancel_event)
 
     try:
+        # Execute layered input guardrails before invoking supervisor
+        passed, rejection_msg, cleaned_query = run_input_guardrails(request.message)
+        if not passed:
+            langfuse = get_client()
+            langfuse.update_current_span(output={"guardrail_rejection": rejection_msg})
+            flush_langfuse()
+            return ChatResponse(response=rejection_msg or "Request rejected by system guardrails.", role="assistant", chat_id=chat_id)
+
+        supervisor = app_state["supervisor"]
+        if not supervisor:
+            raise HTTPException(status_code=503, detail="Supervisor not initialized")
+
+        tags = ["chat-json", "postgres-rag-mcp"] + (request.tags or [])
+
+        langfuse = get_client()
+        langfuse.update_current_span(input={"user_message": cleaned_query})
+
+        messages = []
+        if request.history:
+            for item in request.history:
+                messages.append({"role": item.role, "content": item.content})
+        messages.append({"role": "user", "content": cleaned_query})
+
+        if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+            raise asyncio.CancelledError()
+
         with propagate_attributes(
             trace_name="chat-turn",
             session_id=session_id,
@@ -471,11 +550,18 @@ async def chat(request: ChatRequest):
                 {"messages": messages},
                 config={"callbacks": [handler], "run_name": "supervisor-agent"}
             )
+            if cancel_event.is_set() or not chat_task_manager.is_chat_active(session_key, chat_id):
+                raise asyncio.CancelledError()
+
             content = extract_text_content(result["messages"][-1].content)
             sanitized_content = validate_and_sanitize_output(content)
             langfuse.update_current_span(output={"assistant_response": sanitized_content})
             flush_langfuse()
-            return ChatResponse(response=sanitized_content, role="assistant")
+            return ChatResponse(response=sanitized_content, role="assistant", chat_id=chat_id)
+    except asyncio.CancelledError:
+        logger.info("Chat task cancelled for session %s (chat_id: %s)", session_key, chat_id)
+        flush_langfuse()
+        raise HTTPException(status_code=499, detail="Request cancelled")
     except Exception as e:
         langfuse.update_current_span(
             level="ERROR",
@@ -484,6 +570,8 @@ async def chat(request: ChatRequest):
         )
         flush_langfuse()
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+    finally:
+        await chat_task_manager.unregister_task(session_key, chat_id)
 
 
 def start():
